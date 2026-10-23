@@ -14,6 +14,8 @@ pico_sdk_init()
 # 3. 実行ファイルの定義
 add_executable(rv64_emu
     main.c
+    decode_i.c
+    decode_c.c
 )
 
 # 4. 標準ライブラリとダブルリセット用ライブラリをリンク

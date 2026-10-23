@@ -1,50 +1,53 @@
 #include <stdio.h>
 #include <pico/stdlib.h>
+#include "cpu.h"
 
-// 【超重要】Mac側で作った「kernel.bin.inc」をここでC言語の配列として吸い込む
-// これにより、Pico SDKが自動的にRP2350の物理Flash内の安全な場所に焼き込んでくれます！
 __attribute__((section(".rodata"))) 
 const uint8_t xv6_kernel_rom[] = {
     #include "kernel.bin.inc" 
 };
 
-// カーネルの実際のバイト数
-#define K_BIN_SIZE              30816
-#define VIRT_RAM_START          0x80000000ULL
-
-typedef struct {
-    uint64_t pc;
-    uint64_t x[32];
-} RV64_CPU_t;
+#define K_BIN_SIZE     30816
+#define VIRT_RAM_START 0x80000000ULL
 
 __attribute__((aligned(4096)))
 uint8_t virtual_ram[256 * 1024];
 
 int main() {
     stdio_init_all();
-    
-    // USBシリアルがMac側で認識されるまで少しだけ待つ（ログの頭切れ防止）
-    sleep_ms(2000); 
+    sleep_ms(2000);
     printf("Starting RV64 Emulator on Hazard3...\n");
 
     RV64_CPU_t cpu = {0};
     cpu.pc = 0x80000000ULL;
 
     while (1) {
-        uint32_t insn = 0;
+        cpu.x[0] = 0; // x0は常時ゼロ
+        
+        uint32_t raw_insn = 0;
         uint64_t offset = cpu.pc - VIRT_RAM_START;
         
+        // Fetch
         if (offset < K_BIN_SIZE) {
-            // 【大激変】面倒な物理アドレス指定を撤廃！
-            // C言語の配列ポインタ「xv6_kernel_rom」から読むだけで、SDKの力で自動的にFlashから爆速フェッチされます
-            insn = *(const uint32_t*)(xv6_kernel_rom + offset);
+            raw_insn = *(const uint32_t*)(xv6_kernel_rom + offset);
         } else {
-            insn = *(uint32_t*)&virtual_ram[offset];
+            raw_insn = *(uint32_t*)&virtual_ram[offset];
         }
 
-        printf("PC: 0x%016llx, INSN: 0x%08x\n", cpu.pc, insn);
+        // 命令長の判定
+        int insn_len = ((raw_insn & 0x3) != 0x3) ? 2 : 4;
+        
+        // デバッグ表示
+        printf("PC: 0x%016llx, INSN: 0x%08x\n", cpu.pc, (insn_len == 2) ? (raw_insn & 0xFFFF) : raw_insn);
 
-        cpu.pc += 4;
+        // 分割した関数へ丸投げ（Decode & Execute）
+        if (insn_len == 4) {
+            execute_instruction_32(&cpu, raw_insn);
+        } else {
+            execute_instruction_16(&cpu, raw_insn & 0xFFFF);
+        }
+
+        cpu.pc += insn_len;
         sleep_ms(100);
     }
 }
