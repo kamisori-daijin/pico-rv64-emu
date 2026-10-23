@@ -28,3 +28,8 @@ pico_add_extra_outputs(rv64_emu)
 # 6. 標準入出力をUSBとUARTの両方で有効化
 pico_enable_stdio_uart(rv64_emu 1)
 pico_enable_stdio_usb(rv64_emu 1)
+
+add_custom_target(flash
+    COMMAND /opt/homebrew/bin/picotool load -f -x rv64_emu.uf2
+    DEPENDS rv64_emu
+)
