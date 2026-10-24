@@ -3,13 +3,17 @@
 #include "pico/stdlib.h"
 #include "cpu.h"
 
-// ゲスト物理メモリのサイズ (例: 64MB)
-#define RAM_SIZE (64 * 1024 * 1024)
+// ゲスト物理メモリのサイズ（内蔵SRAMに収まる適度なサイズ、例: 256KB）
+#define RAM_SIZE (256 * 1024)
 #define RAM_BASE 0x80000000ULL
 
 static uint8_t guest_ram[RAM_SIZE];
 
-// --- 1. まず最初に paddr_to_host を完全に定義する ---
+// objcopy でリンクされたバイナリの開始・終了シンボル
+extern uint8_t _binary_kernel_bin_start[];
+extern uint8_t _binary_kernel_bin_end[];
+
+// --- 物理アドレスからホストのゲストRAMポインタへの変換 ---
 static inline uint8_t* paddr_to_host(uint32_t paddr) {
     if (paddr < RAM_BASE || paddr >= (RAM_BASE + RAM_SIZE)) {
         return NULL;
@@ -17,28 +21,26 @@ static inline uint8_t* paddr_to_host(uint32_t paddr) {
     return &guest_ram[paddr - RAM_BASE];
 }
 
-// kernel.bin.inc のインクルード
-// ※ もしファイルがない場合はビルドエラーになるため、事前に xxd -i 等で用意してください
-#include "kernel.bin.inc"
-
-// --- 2. メモリプリミティブ（paddr_to_host 定義後なので安全） ---
-
+// --- メモリプリミティブ（フラッシュ直接読み込み対応） ---
 uint8_t mem_read8(uint32_t paddr) {
     uint8_t *host_ptr = paddr_to_host(paddr);
-    if (!host_ptr) return 0;
-    return *host_ptr;
+    if (host_ptr) return *host_ptr;
+    
+    // もしRAM領域外（例: カーネルが置かれたフラッシュ領域やMMIO等）へのアクセスなら
+    // 必要に応じてフラッシュから直接読む、あるいはトラップを返す
+    return 0;
 }
 
 uint16_t mem_read16(uint32_t paddr) {
     uint8_t *host_ptr = paddr_to_host(paddr);
-    if (!host_ptr) return 0;
-    return *(uint16_t *)host_ptr;
+    if (host_ptr) return *(uint16_t *)host_ptr;
+    return 0;
 }
 
 uint32_t mem_read32(uint32_t paddr) {
     uint8_t *host_ptr = paddr_to_host(paddr);
-    if (!host_ptr) return 0;
-    return *(uint32_t *)host_ptr;
+    if (host_ptr) return *(uint32_t *)host_ptr;
+    return 0;
 }
 
 reg64_t mem_read64(uint32_t paddr) {
@@ -68,32 +70,30 @@ void mem_write64(uint32_t paddr, reg64_t val) {
     mem_write32(paddr + 4, val.hi);
 }
 
-// --- メイン関数 & エミュレーションループ ---
-
 int main(void) {
     stdio_init_all();
     sleep_ms(2000);
 
     printf("\n========================================\n");
-    printf(" RV64 Emulator on RP2350 (Hazard3/RISC-V)\n");
+    printf(" RV64 Emulator on RP2350 (Flash XIP Mode)\n");
     printf("========================================\n");
 
     RV64CPU cpu;
     memset(&cpu, 0, sizeof(RV64CPU));
     memset(guest_ram, 0, RAM_SIZE);
 
-    // カーネルバイナリのロードチェック
-    // ※ kernel_bin および kernel_bin_len は kernel.bin.inc 内で定義される必要があります
-    #ifdef kernel_bin_len
-    if (kernel_bin_len > RAM_SIZE) {
-        printf("Error: Kernel binary is too large for guest RAM! (%u bytes)\n", (unsigned int)kernel_bin_len);
+    // フラッシュ上にリンクされたバイナリのサイズを計算
+    size_t kernel_len = (size_t)(_binary_kernel_bin_end - _binary_kernel_bin_start);
+    printf("Kernel binary in Flash. Size: %u bytes\n", (unsigned int)kernel_len);
+
+    if (kernel_len > RAM_SIZE) {
+        printf("Error: Kernel binary is too large for guest RAM! (%u bytes)\n", (unsigned int)kernel_len);
         return -1;
     }
-    memcpy(&guest_ram[0], kernel_bin, kernel_bin_len);
-    printf("Kernel binary loaded successfully. Size: %u bytes\n", (unsigned int)kernel_bin_len);
-    #else
-    printf("Warning: kernel_bin_len is not defined. Skipping binary load.\n");
-    #endif
+
+    // 起動時にフラッシュROM上（_binary_kernel_bin_start）からゲストRAMのベースへコピーする
+    memcpy(&guest_ram[0], _binary_kernel_bin_start, kernel_len);
+    printf("Kernel successfully copied from Flash to Guest RAM base (0x80000000).\n");
 
     cpu.pc.lo = (uint32_t)RAM_BASE;
     cpu.pc.hi = 0x00000000;
@@ -117,7 +117,6 @@ int main(void) {
     }
 
     printf("CPU halted after executing %llu instructions.\n", inst_count);
-    
     while (1) {
         tight_loop_contents();
     }

@@ -16,6 +16,7 @@ add_executable(rv64_emu
     main.c
     decode_i.c
     #decode_c.c
+    ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
 )
 
 # 4. 標準ライブラリとダブルリセット用ライブラリをリンク
@@ -36,3 +37,12 @@ add_custom_target(flash
     COMMAND /opt/homebrew/bin/picotool load -f -x rv64_emu.uf2
     DEPENDS rv64_emu
 )
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
+    COMMAND xxd -i ${CMAKE_CURRENT_SOURCE_DIR}/kernel.bin | sed 's/^unsigned char/const unsigned char/' > ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/kernel.bin
+)
+
+# 実行ファイルが生成されたインクルードファイルを読めるようにする
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
