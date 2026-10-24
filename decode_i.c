@@ -1,30 +1,343 @@
-#include <stdio.h>
 #include "cpu.h"
+#include <stdio.h>
+#include <stdbool.h>
 
-void execute_instruction_32(RV64_CPU_t *cpu, uint32_t insn) {
-    uint8_t opcode = insn & 0x7F;
-    uint8_t rd     = (insn >> 7) & 0x1F;
-    uint8_t funct3 = (insn >> 12) & 0x7;
-    uint8_t rs1    = (insn >> 15) & 0x1F;
-    uint8_t rs2    = (insn >> 20) & 0x1F;
-    uint8_t funct7 = (insn >> 25) & 0x7F;
+// --- 純32bit筆算型ヘルパー (M33ネイティブ演算最適化) ---
+
+static inline void reg64_add(reg64_t *d, reg64_t a, reg64_t b) {
+    uint32_t lo = a.lo + b.lo;
+    uint32_t carry = (lo < a.lo) ? 1 : 0;
+    d->lo = lo;
+    d->hi = a.hi + b.hi + carry;
+}
+
+static inline void reg64_sub(reg64_t *d, reg64_t a, reg64_t b) {
+    uint32_t lo = a.lo - b.lo;
+    uint32_t borrow = (a.lo < b.lo) ? 1 : 0;
+    d->lo = lo;
+    d->hi = a.hi - b.hi - borrow;
+}
+
+static inline void reg64_mul(reg64_t *d, reg64_t a, reg64_t b) {
+    uint64_t va = ((uint64_t)a.hi << 32) | a.lo;
+    uint64_t vb = ((uint64_t)b.hi << 32) | b.lo;
+    uint64_t res = va * vb;
+    d->lo = (uint32_t)res;
+    d->hi = (uint32_t)(res >> 32);
+}
+
+static inline void reg64_divu(reg64_t *d, reg64_t a, reg64_t b) {
+    uint64_t va = ((uint64_t)a.hi << 32) | a.lo;
+    uint64_t vb = ((uint64_t)b.hi << 32) | b.lo;
+    if (vb == 0) {
+        d->lo = 0xFFFFFFFF;
+        d->hi = 0xFFFFFFFF;
+    } else {
+        uint64_t res = va / vb;
+        d->lo = (uint32_t)res;
+        d->hi = (uint32_t)(res >> 32);
+    }
+}
+
+static inline void reg64_remu(reg64_t *d, reg64_t a, reg64_t b) {
+    uint64_t va = ((uint64_t)a.hi << 32) | a.lo;
+    uint64_t vb = ((uint64_t)b.hi << 32) | b.lo;
+    if (vb == 0) {
+        *d = a;
+    } else {
+        uint64_t res = va % vb;
+        d->lo = (uint32_t)res;
+        d->hi = (uint32_t)(res >> 32);
+    }
+}
+
+static inline void reg64_sll(reg64_t *d, reg64_t a, int shift) {
+    shift &= 0x3F;
+    uint64_t v = ((uint64_t)a.hi << 32) | a.lo;
+    v <<= shift;
+    d->lo = (uint32_t)v;
+    d->hi = (uint32_t)(v >> 32);
+}
+
+static inline void reg64_srl(reg64_t *d, reg64_t a, int shift) {
+    shift &= 0x3F;
+    uint64_t v = ((uint64_t)a.hi << 32) | a.lo;
+    v >>= shift;
+    d->lo = (uint32_t)v;
+    d->hi = (uint32_t)(v >> 32);
+}
+
+static inline void reg64_sra(reg64_t *d, reg64_t a, int shift) {
+    shift &= 0x3F;
+    int64_t v = (int64_t)(((uint64_t)a.hi << 32) | a.lo);
+    v >>= shift;
+    d->lo = (uint32_t)v;
+    d->hi = (uint32_t)((uint64_t)v >> 32);
+}
+
+static inline void reg64_from_imm32(reg64_t *d, int32_t imm) {
+    d->lo = (uint32_t)imm;
+    d->hi = (imm < 0) ? 0xFFFFFFFF : 0x00000000;
+}
+
+static inline void reg64_from_u32(reg64_t *d, uint32_t val32) {
+    d->lo = val32;
+    d->hi = 0x00000000;
+}
+
+static inline void reg64_sext32(reg64_t *d, uint32_t val32) {
+    int32_t signed_val = (int32_t)val32;
+    d->lo = (uint32_t)signed_val;
+    d->hi = (signed_val < 0) ? 0xFFFFFFFF : 0x00000000;
+}
+
+static inline bool reg64_slt(reg64_t a, reg64_t b) {
+    int64_t va = (int64_t)(((uint64_t)a.hi << 32) | a.lo);
+    int64_t vb = (int64_t)(((uint64_t)b.hi << 32) | b.lo);
+    return va < vb;
+}
+
+static inline bool reg64_sltu(reg64_t a, reg64_t b) {
+    uint64_t va = ((uint64_t)a.hi << 32) | a.lo;
+    uint64_t vb = ((uint64_t)b.hi << 32) | b.lo;
+    return va < vb;
+}
+
+static inline bool reg64_eq(reg64_t a, reg64_t b) {
+    return (a.lo == b.lo) && (a.hi == b.hi);
+}
+
+void execute_instruction(RV64CPU *cpu, uint32_t inst) {
+    uint32_t opcode = inst & 0x7F;
+    uint32_t rd     = (inst >> 7) & 0x1F;
+    uint32_t funct3 = (inst >> 12) & 0x07;
+    uint32_t rs1    = (inst >> 15) & 0x1F;
+    uint32_t rs2    = (inst >> 20) & 0x1F;
+    uint32_t funct7 = (inst >> 25) & 0x7F;
+
+    int32_t imm_i = (int32_t)inst >> 20;
+    int32_t imm_s = (int32_t)((inst >> 7 & 0x1F) | ((inst >> 20 & 0x7F) << 5)) << 20 >> 20;
+
+    cpu->x[0].lo = 0;
+    cpu->x[0].hi = 0;
 
     switch (opcode) {
-        case 0x17: { // AUIPC
-            int64_t imm = (int32_t)(insn & 0xFFFFF000); 
-            cpu->x[rd] = cpu->pc + imm;
-            break;
-        }
-        case 0x13: { // OP-IMM (ADDIなど)
-            if (funct3 == 0x0) { // ADDI
-                int64_t imm = (int32_t)insn >> 20; 
-                cpu->x[rd] = cpu->x[rs1] + imm;
+        case 0x33:
+            if (funct7 == 0x00) {
+                switch (funct3) {
+                    case 0x0: reg64_add(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x1: reg64_sll(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2].lo); break;
+                    case 0x2: reg64_from_imm32(&cpu->x[rd], reg64_slt(cpu->x[rs1], cpu->x[rs2]) ? 1 : 0); break;
+                    case 0x3: reg64_from_imm32(&cpu->x[rd], reg64_sltu(cpu->x[rs1], cpu->x[rs2]) ? 1 : 0); break;
+                    case 0x4: cpu->x[rd].lo = cpu->x[rs1].lo ^ cpu->x[rs2].lo; cpu->x[rd].hi = cpu->x[rs1].hi ^ cpu->x[rs2].hi; break;
+                    case 0x5: reg64_srl(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2].lo); break;
+                    case 0x6: cpu->x[rd].lo = cpu->x[rs1].lo | cpu->x[rs2].lo; cpu->x[rd].hi = cpu->x[rs1].hi | cpu->x[rs2].hi; break;
+                    case 0x7: cpu->x[rd].lo = cpu->x[rs1].lo & cpu->x[rs2].lo; cpu->x[rd].hi = cpu->x[rs1].hi & cpu->x[rs2].hi; break;
+                }
+            } else if (funct7 == 0x20) {
+                switch (funct3) {
+                    case 0x0: reg64_sub(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x5: reg64_sra(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2].lo); break;
+                }
+            } else if (funct7 == 0x01) {
+                switch (funct3) {
+                    case 0x0: reg64_mul(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x5: reg64_divu(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x7: reg64_remu(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
+                }
             }
             break;
-        }
-        // ★ここに今後の32bit命令（mulなど）を足していく
+
+        case 0x3B:
+            {
+                uint32_t v1 = cpu->x[rs1].lo;
+                uint32_t v2 = cpu->x[rs2].lo;
+                uint32_t res32 = 0;
+                if (funct7 == 0x00) {
+                    if (funct3 == 0x0) res32 = v1 + v2;
+                    else if (funct3 == 0x1) res32 = v1 << (v2 & 0x1F);
+                } else if (funct7 == 0x20) {
+                    if (funct3 == 0x0) res32 = v1 - v2;
+                    else if (funct3 == 0x5) res32 = (uint32_t)((int32_t)v1 >> (v2 & 0x1F));
+                }
+                reg64_sext32(&cpu->x[rd], res32);
+            }
+            break;
+
+        case 0x13:
+            {
+                reg64_t imm_val;
+                reg64_from_imm32(&imm_val, imm_i);
+                switch (funct3) {
+                    case 0x0: reg64_add(&cpu->x[rd], cpu->x[rs1], imm_val); break;
+                    case 0x2: reg64_from_imm32(&cpu->x[rd], reg64_slt(cpu->x[rs1], imm_val) ? 1 : 0); break;
+                    case 0x3: reg64_from_imm32(&cpu->x[rd], reg64_sltu(cpu->x[rs1], imm_val) ? 1 : 0); break;
+                    case 0x4: cpu->x[rd].lo = cpu->x[rs1].lo ^ imm_val.lo; cpu->x[rd].hi = cpu->x[rs1].hi ^ imm_val.hi; break;
+                    case 0x6: cpu->x[rd].lo = cpu->x[rs1].lo | imm_val.lo; cpu->x[rd].hi = cpu->x[rs1].hi | imm_val.hi; break;
+                    case 0x7: cpu->x[rd].lo = cpu->x[rs1].lo & imm_val.lo; cpu->x[rd].hi = cpu->x[rs1].hi & imm_val.hi; break;
+                    case 0x1: reg64_sll(&cpu->x[rd], cpu->x[rs1], rs2); break;
+                    case 0x5:
+                        if ((inst & 0x40000000) == 0) reg64_srl(&cpu->x[rd], cpu->x[rs1], rs2);
+                        else reg64_sra(&cpu->x[rd], cpu->x[rs1], rs2);
+                        break;
+                }
+            }
+            break;
+
+        case 0x1B:
+            {
+                uint32_t v = cpu->x[rs1].lo;
+                uint32_t res32 = 0;
+                if (funct3 == 0x0) res32 = v + imm_i;
+                else if (funct3 == 0x1) res32 = v << (rs2 & 0x1F);
+                else if (funct3 == 0x5) {
+                    if ((inst & 0x40000000) == 0) res32 = v >> (rs2 & 0x1F);
+                    else res32 = (uint32_t)((int32_t)v >> (rs2 & 0x1F));
+                }
+                reg64_sext32(&cpu->x[rd], res32);
+            }
+            break;
+
+        case 0x03:
+            {
+                uint32_t paddr = cpu->x[rs1].lo + imm_i;
+                switch (funct3) {
+                    case 0x0: reg64_from_imm32(&cpu->x[rd], (int32_t)(int8_t)mem_read8(paddr)); break;
+                    case 0x1: reg64_from_imm32(&cpu->x[rd], (int32_t)(int16_t)mem_read16(paddr)); break;
+                    case 0x2: reg64_from_imm32(&cpu->x[rd], (int32_t)mem_read32(paddr)); break;
+                    case 0x3: cpu->x[rd] = mem_read64(paddr); break;
+                    case 0x4: reg64_from_u32(&cpu->x[rd], (uint32_t)mem_read8(paddr)); break;
+                    case 0x5: reg64_from_u32(&cpu->x[rd], (uint32_t)mem_read16(paddr)); break;
+                    case 0x6: reg64_from_u32(&cpu->x[rd], mem_read32(paddr)); break;
+                }
+            }
+            break;
+
+        case 0x23:
+            {
+                uint32_t paddr = cpu->x[rs1].lo + imm_s;
+                switch (funct3) {
+                    case 0x0: mem_write8(paddr, (uint8_t)cpu->x[rs2].lo); break;
+                    case 0x1: mem_write16(paddr, (uint16_t)cpu->x[rs2].lo); break;
+                    case 0x2: mem_write32(paddr, cpu->x[rs2].lo); break;
+                    case 0x3: mem_write64(paddr, cpu->x[rs2]); break;
+                }
+            }
+            break;
+
+        case 0x37:
+            reg64_from_imm32(&cpu->x[rd], (int32_t)(inst & 0xFFFFF000));
+            break;
+
+        case 0x17:
+            {
+                reg64_t offset;
+                reg64_from_imm32(&offset, (int32_t)(inst & 0xFFFFF000));
+                reg64_add(&cpu->x[rd], cpu->pc, offset);
+            }
+            break;
+
+        case 0x6F:
+            {
+                int32_t offset = ((inst >> 31) & 0x1) << 20 |
+                                 ((inst >> 21) & 0x3FF) << 1 |
+                                 ((inst >> 20) & 0x1) << 11 |
+                                 ((inst >> 12) & 0xFF) << 12;
+                if (offset & 0x100000) offset |= 0xFFE00000;
+
+                reg64_t next_pc;
+                reg64_t pc_four = { .lo = 4, .hi = 0 };
+                reg64_add(&next_pc, cpu->pc, pc_four);
+                cpu->x[rd] = next_pc;
+
+                reg64_t target_offset = { .lo = (uint32_t)offset, .hi = (offset < 0) ? 0xFFFFFFFF : 0 };
+                reg64_add(&cpu->pc, cpu->pc, target_offset);
+                return;
+            }
+            break;
+
+        case 0x67:
+            {
+                reg64_t next_pc;
+                reg64_t pc_four = { .lo = 4, .hi = 0 };
+                reg64_add(&next_pc, cpu->pc, pc_four);
+                cpu->x[rd] = next_pc;
+
+                reg64_t imm_reg;
+                reg64_from_imm32(&imm_reg, imm_i);
+                reg64_t target;
+                reg64_add(&target, cpu->x[rs1], imm_reg);
+                target.lo &= ~1U;
+
+                cpu->pc = target;
+                return;
+            }
+            break;
+
+        case 0x63:
+            {
+                int32_t imm_b = ((inst >> 31) & 0x1) << 12 |
+                                ((inst >> 7) & 0x1) << 11 |
+                                ((inst >> 25) & 0x3F) << 5 |
+                                ((inst >> 8) & 0xF) << 1;
+                if (imm_b & 0x1000) imm_b |= 0xFFFFE000;
+
+                bool take = false;
+                switch (funct3) {
+                    case 0x0: take = reg64_eq(cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x1: take = !reg64_eq(cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x4: take = reg64_slt(cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x5: take = !reg64_slt(cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x6: take = reg64_sltu(cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x7: take = !reg64_sltu(cpu->x[rs1], cpu->x[rs2]); break;
+                }
+                if (take) {
+                    reg64_t offset = { .lo = (uint32_t)imm_b, .hi = (imm_b < 0) ? 0xFFFFFFFF : 0 };
+                    reg64_add(&cpu->pc, cpu->pc, offset);
+                    return;
+                }
+            }
+            break;
+
+        case 0x73:
+            {
+                uint32_t csr_addr = inst >> 20;
+                if (funct3 == 0x0 && funct7 == 0x18) {
+                    cpu->pc = cpu->mepc;
+                    return;
+                } else if (funct3 == 0x0 && funct7 == 0x10) {
+                    cpu->pc = cpu->sepc;
+                    return;
+                } else if (funct3 == 0x0 && (inst & 0xFE000FFF) == 0x10200073) {
+                    cpu->halted = true;
+                } else {
+                    if (csr_addr == 0xC01) {
+                        cpu->x[rd].lo = 0;
+                        cpu->x[rd].hi = 0;
+                    } else if (csr_addr == 0x180) {
+                        cpu->x[rd] = cpu->satp;
+                        cpu->satp = cpu->x[rs1];
+                    }
+                }
+            }
+            break;
+
+        case 0x2F:
+            if ((funct7 & 0x7C) == 0x08) {
+                uint32_t paddr = cpu->x[rs1].lo;
+                uint32_t old_val = mem_read32(paddr);
+                mem_write32(paddr, cpu->x[rs2].lo);
+                reg64_sext32(&cpu->x[rd], old_val);
+            }
+            break;
+
+        case 0x0F:
+            break;
+
         default:
-            printf("未対応の32bit命令: 0x%08x (PC: 0x%016llx)\n", insn, cpu->pc);
-            while(1);
+            break;
     }
+
+    reg64_t four = { .lo = 4, .hi = 0 };
+    reg64_add(&cpu->pc, cpu->pc, four);
 }
