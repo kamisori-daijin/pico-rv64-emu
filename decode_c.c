@@ -269,6 +269,8 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
         }
     }
 
-    printf("Unknown compressed instruction: 0x%04X at PC: 0x%08X\n", inst, cpu->pc.lo);
+    // 詳細なデバッグ情報を吐き出して停止する
+    uint32_t f3 = (inst >> 13) & 0x7;
+    printf("[UNKNOWN RVC] inst=0x%04X at PC=0x%08X (quadrant=%u, funct3=%u)\n", inst, cpu->pc.lo, quadrant, f3);
     cpu->halted = true;
 }
