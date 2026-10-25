@@ -159,7 +159,6 @@ int main(void) {
         // 最下位2ビットで命令長を判定 (11なら32bit、それ以外は16bit RVC)
         if ((half & 0x3) == 0x3) {
             // --- 32ビット標準命令 ---
-            // 圧縮命令の直後など偶数番地(2の倍数)になり得るので、2の倍数であることを確認
             if (paddr % 2 != 0) {
                 printf("[ERROR] Misaligned instruction fetch! PC = 0x%08X\n", paddr);
                 cpu.halted = true;
@@ -172,12 +171,10 @@ int main(void) {
                 printf("[32-bit] count=%llu PC=0x%08X inst=0x%08X\n", inst_count, paddr, inst);
             }
 
-            uint32_t old_pc = cpu.pc.lo;
+            // execute_instruction の内部で既に PC が進められる（あるいはジャンプ先へ書き換わる）ため、
+            // ここでの二重の pc += 4 加算は削除する！
             execute_instruction(&cpu, inst);
-            
-            if (cpu.pc.lo == old_pc && !cpu.halted) {
-                cpu.pc.lo += 4;
-            }
+
         } else {
             // --- 16ビット圧縮命令 (RVC) ---
             if (inst_count < 100) {
