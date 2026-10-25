@@ -272,15 +272,17 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x7) {
-                // c.sdsp (★修正: 正しい offset[5:3|8:6] 抽出)
-                uint32_t uimm = (((inst >> 10) & 0x7) << 6) | (((inst >> 7) & 0x7) << 3);
-                uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
-                mem_write64(addr, cpu->x[rs2]);
-                printf("[DEBUG c.sdsp] inst=0x%04X rs2=%u addr=0x%08X val=0x%08X_%08X\n", 
-                                       inst, rs2, addr, cpu->x[rs2].hi, cpu->x[rs2].lo);
-                                fflush(stdout);
-                cpu->pc.lo += 2;
-                return;
+                            // c.sdsp (公式仕様: offset[5:3] は inst[12:10] << 3, offset[8:6] は inst[9:7] << 6)
+                            uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 7) & 0x7) << 6);
+                            uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
+                            
+                            mem_write64(addr, cpu->x[rs2]);
+                            printf("[DEBUG c.sdsp] inst=0x%04X rs2=%u addr=0x%08X val=0x%08X_%08X\n", 
+                                   inst, rs2, addr, cpu->x[rs2].hi, cpu->x[rs2].lo);
+                            fflush(stdout);
+                            
+                            cpu->pc.lo += 2;
+                            return;
             }
             break;
         }
