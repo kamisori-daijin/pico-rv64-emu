@@ -215,52 +215,50 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x3) {
-                // c.ldsp
-                uint32_t uimm = (((inst >> 5) & 0x3) << 3) | (((inst >> 12) & 0x1) << 5) | (((inst >> 2) & 0x7) << 6);
+                // c.ldsp (★修正: 正しい uimm ビット配置)
+                uint32_t uimm = (((inst >> 4) & 0x7) << 3) | (((inst >> 12) & 0x1) << 6) | (((inst >> 2) & 0x3) << 7);
                 uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
                 reg64_t val = mem_read64(addr);
                 if (rd_rs1 != 0) {
                     cpu->x[rd_rs1] = val;
-                    // ★追加: ra (x1) に何がロードされたか監視
                     if (rd_rs1 == 1) {
-                            printf("[DEBUG c.ldsp] LOAD to ra (x1) from stack addr=0x%08X -> val=0x%08X_%08X\n", addr, val.hi, val.lo);
+                        printf("[DEBUG c.ldsp] LOAD to ra (x1) from stack addr=0x%08X -> val=0x%08X_%08X\n", addr, val.hi, val.lo);
                     }
                 }
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x4) {
-                            uint32_t bit12 = (inst >> 12) & 0x1;
-                            if (bit12 == 0) {
-                                if (rs2 == 0) {
-                                    // c.jr
-                                    uint32_t target = (uint32_t)get_reg64(cpu, rd_rs1);
-                                    // ★追加: jr の飛び先とレジスタ番号を確認
-                                    printf("[DEBUG c.jr] PC=0x%08X jumping to reg x%u (target=0x%08X, val=0x%08X_%08X)\n", 
-                                           cpu->pc.lo, rd_rs1, target, cpu->x[rd_rs1].hi, cpu->x[rd_rs1].lo);
-                                    set_pc32(cpu, target);
-                                    return;
-                                } else {
-                                    // c.mv
-                                    set_reg64(cpu, rd_rs1, get_reg64(cpu, rs2));
-                                    cpu->pc.lo += 2;
-                                    return;
-                                }
-                            } else {
-                                if (rs2 == 0) {
-                                    // c.jalr
-                                    uint32_t target = (uint32_t)get_reg64(cpu, rd_rs1);
-                                    printf("[DEBUG c.jalr] PC=0x%08X jumping to reg x%u (target=0x%08X)\n", cpu->pc.lo, rd_rs1, target);
-                                    set_reg64(cpu, 1, get_pc32(cpu) + 2);
-                                    set_pc32(cpu, target);
-                                    return;
-                                } else {
-                                    // c.add
-                                    set_reg64(cpu, rd_rs1, get_reg64(cpu, rd_rs1) + get_reg64(cpu, rs2));
-                                    cpu->pc.lo += 2;
-                                    return;
-                                }
-                            }
-                        } else if (funct3 == 0x6) {
+                uint32_t bit12 = (inst >> 12) & 0x1;
+                if (bit12 == 0) {
+                    if (rs2 == 0) {
+                        // c.jr
+                        uint32_t target = (uint32_t)get_reg64(cpu, rd_rs1);
+                        printf("[DEBUG c.jr] PC=0x%08X jumping to reg x%u (target=0x%08X, val=0x%08X_%08X)\n", 
+                               cpu->pc.lo, rd_rs1, target, cpu->x[rd_rs1].hi, cpu->x[rd_rs1].lo);
+                        set_pc32(cpu, target);
+                        return;
+                    } else {
+                        // c.mv
+                        set_reg64(cpu, rd_rs1, get_reg64(cpu, rs2));
+                        cpu->pc.lo += 2;
+                        return;
+                    }
+                } else {
+                    if (rs2 == 0) {
+                        // c.jalr
+                        uint32_t target = (uint32_t)get_reg64(cpu, rd_rs1);
+                        printf("[DEBUG c.jalr] PC=0x%08X jumping to reg x%u (target=0x%08X)\n", cpu->pc.lo, rd_rs1, target);
+                        set_reg64(cpu, 1, get_pc32(cpu) + 2);
+                        set_pc32(cpu, target);
+                        return;
+                    } else {
+                        // c.add
+                        set_reg64(cpu, rd_rs1, get_reg64(cpu, rd_rs1) + get_reg64(cpu, rs2));
+                        cpu->pc.lo += 2;
+                        return;
+                    }
+                }
+            } else if (funct3 == 0x6) {
                 // c.swsp
                 uint32_t uimm = (((inst >> 9) & 0xf) << 2) | (((inst >> 7) & 0x3) << 6);
                 uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
@@ -268,8 +266,8 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x7) {
-                // c.sdsp
-                uint32_t uimm = (((inst >> 7) & 0x7) << 3) | (((inst >> 6) & 0x1) << 6) | (((inst >> 5) & 0x1) << 7);
+                // c.sdsp (★修正: 正しい uimm ビット配置)
+                uint32_t uimm = (((inst >> 7) & 0x7) << 3) | (((inst >> 10) & 0x7) << 6);
                 uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
                 mem_write64(addr, cpu->x[rs2]);
                 cpu->pc.lo += 2;
