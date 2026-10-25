@@ -116,7 +116,11 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
     uint32_t funct7 = (inst >> 25) & 0x7F;
 
     int32_t imm_i = (int32_t)inst >> 20;
-    int32_t imm_s = (int32_t)((inst >> 7 & 0x1F) | ((inst >> 20 & 0x7F) << 5)) << 20 >> 20;
+    int32_t imm_s = (int32_t)(((inst >> 25) & 0x7F) << 5) | ((inst >> 7) & 0x1F);
+    // 12ビットの符号拡張
+    if (imm_s & 0x800) {
+        imm_s |= 0xFFFFF000;
+    }
 
     cpu->x[0].lo = 0;
     cpu->x[0].hi = 0;
@@ -220,7 +224,12 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                     case 0x0: mem_write8(paddr, (uint8_t)cpu->x[rs2].lo); break;
                     case 0x1: mem_write16(paddr, (uint16_t)cpu->x[rs2].lo); break;
                     case 0x2: mem_write32(paddr, cpu->x[rs2].lo); break;
-                    case 0x3: mem_write64(paddr, cpu->x[rs2]); break;
+                    case 0x3: 
+                        mem_write64(paddr, cpu->x[rs2]); 
+                        if (rs2 == 1) { // ra がストアされたとき
+                            printf("[DEBUG sd] STORE ra (x1) val=0x%08X_%08X to addr=0x%08X\n", cpu->x[1].hi, cpu->x[1].lo, paddr);
+                        }
+                        break;
                 }
             }
             break;
