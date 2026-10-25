@@ -302,49 +302,101 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
         case 0x73:
                     {
                         uint32_t csr_addr = inst >> 20;
-                        if (funct3 == 0x0 && funct7 == 0x18) {
-                            // mret
-                            cpu->pc = cpu->mepc;
-                            return;
-                        } else if (funct3 == 0x0 && funct7 == 0x10) {
-                            // sret
-                            cpu->pc = cpu->sepc;
-                            return;
-                        } else if (funct3 == 0x0 && (inst & 0xFE000FFF) == 0x10200073) {
-                            // ecall / ebreak / wfi 等
-                            printf("[CSR HALT] ecall/halt requested at PC=0x%08X\n", cpu->pc.lo);
-                            cpu->halted = true;
-                            return;
-                        } else {
-                            uint32_t val_lo = 0;
-                            uint32_t val_hi = 0;
-                
-                            if (csr_addr == 0xF14) {
-                                // mhartid
-                                val_lo = 0;
-                                val_hi = 0;
-                            } else if (csr_addr == 0xC01 || csr_addr == 0xC00) {
-                                // time / cycle
-                                val_lo = 0;
-                                val_hi = 0;
-                            } else if (csr_addr == 0x100) {
-                                // sstatus
-                                val_lo = cpu->sstatus.lo;
-                                val_hi = cpu->sstatus.hi;
-                            } else if (csr_addr == 0x180) {
-                                // satp
-                                val_lo = cpu->satp.lo;
-                                val_hi = cpu->satp.hi;
-                                cpu->satp = cpu->x[rs1];
+                        
+                        // 特殊特権命令 (mret / sret / ecall 等)
+                        if (funct3 == 0x0) {
+                            if (funct7 == 0x18) {
+                                // mret
+                                cpu->pc = cpu->mepc;
+                                return;
+                            } else if (funct7 == 0x10) {
+                                // sret
+                                cpu->pc = cpu->sepc;
+                                return;
+                            } else if ((inst & 0xFE000FFF) == 0x10200073) {
+                                // ecall / wfi 等
+                                cpu->halted = true;
+                                return;
+                            }
+                        }
+        
+                        // --- CSRのポインタ（またはレジスタ）を特定 ---
+                        reg64_t *target_csr = NULL;
+                        bool read_only = false;
+        
+                        switch (csr_addr) {
+                            case 0xF14: // mhartid (RO)
+                            case 0xC00: // cycle (RO)
+                            case 0xC01: // time (RO)
+                                read_only = true;
+                                break;
+                            case 0x100: target_csr = &cpu->sstatus; break;
+                            case 0x104: target_csr = &cpu->sie; break;
+                            case 0x180: target_csr = &cpu->satp; break;
+                            case 0x300: target_csr = &cpu->mstatus; break;
+                            case 0x302: target_csr = &cpu->medeleg; break;
+                            case 0x303: target_csr = &cpu->mideleg; break;
+                            case 0x306: target_csr = &cpu->mcounteren; break;
+                            case 0x30A: target_csr = &cpu->menvcfg; break;
+                            case 0x341: target_csr = &cpu->mepc; break;
+                            default:
+                                // 未知のCSRはダミーで受け止めておく（止まらないようにする）
+                                // 必要に応じてここで [UNKNOWN CSR] を出してもよい
+                                break;
+                        }
+        
+                        // 1. まず現在のCSRの値を読み出す (rd に書き込む用)
+                        reg64_t old_val = { .lo = 0, .hi = 0 };
+                        if (csr_addr == 0xF14) {
+                            old_val.lo = 0; // hartid = 0
+                            old_val.hi = 0;
+                        } else if (csr_addr == 0xC00 || csr_addr == 0xC01) {
+                            old_val.lo = 0; // time = 0
+                            old_val.hi = 0;
+                        } else if (target_csr != NULL) {
+                            old_val = *target_csr;
+                        }
+        
+                        // 2. 書き込み処理 (funct3 の下位2ビットが 0 以外なら書き込みあり)
+                        uint32_t wr_type = funct3 & 0x3;
+                        if (wr_type != 0 && !read_only) {
+                            // rs1 フィールドから書き込む値を取得 (即値命令の場合は zimm)
+                            uint64_t rs1_val = 0;
+                            if ((funct3 & 0x4) != 0) {
+                                // 即値 CSR (csrrwi等): rs1 の位置がそのまま 5bit の即値になる
+                                rs1_val = rs1;
                             } else {
-                                // 未実装のCSRが呼ばれた！ここでアドレスを暴く
-                                printf("[UNKNOWN CSR] addr=0x%03X (inst=0x%08X) at PC=0x%08X\n", csr_addr, inst, cpu->pc.lo);
+                                rs1_val = ((uint64_t)cpu->x[rs1].hi << 32) | cpu->x[rs1].lo;
                             }
-                
-                            if (rd != 0) {
-                                cpu->x[rd].lo = val_lo;
-                                cpu->x[rd].hi = val_hi;
+        
+                            uint64_t old_u64 = ((uint64_t)old_val.hi << 32) | old_val.lo;
+                            uint64_t new_u64 = old_u64;
+        
+                            if (wr_type == 1) {
+                                // csrrw / csrrwi: 代入
+                                new_u64 = rs1_val;
+                            } else if (wr_type == 2) {
+                                // csrrs / csrrsi: ビットセット (OR)
+                                new_u64 = old_u64 | rs1_val;
+                            } else if (wr_type == 3) {
+                                // csrrc / csrrci: ビットクリア (AND ~val)
+                                new_u64 = old_u64 & ~rs1_val;
                             }
+        
+                            reg64_t new_val = { .lo = (uint32_t)new_u64, .hi = (uint32_t)(new_u64 >> 32) };
+        
+                            if (target_csr != NULL) {
+                                *target_csr = new_val;
+                            }
+                            // 特殊なCSR（satpなど）の副作用があればここで処理可能
+                            if (csr_addr == 0x180) {
+                                cpu->satp = new_val;
+                            }
+                        }
+        
+                        // 3. 元のCSRの値を rd レジスタに返す (rd != 0 の場合)
+                        if (rd != 0) {
+                            cpu->x[rd] = old_val;
                         }
                     }
                     break;

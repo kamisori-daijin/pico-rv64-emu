@@ -17,10 +17,16 @@ typedef struct {
     // 主要CSR
     reg64_t satp;
     reg64_t sstatus;
+    reg64_t mstatus;    // 追加
     reg64_t sepc;
     reg64_t mepc;
     reg64_t stvec;
     reg64_t scause;
+    reg64_t medeleg;    // 追加
+    reg64_t mideleg;    // 追加
+    reg64_t sie;        // 追加
+    reg64_t mcounteren; // 追加
+    reg64_t menvcfg;    // 追加
     
     uint32_t priv_mode;  // 0: User, 1: Supervisor, 3: Machine
     bool halted;         // wfi 等での停止フラグ

@@ -164,7 +164,7 @@ int main(void) {
 
             uint32_t inst = mem_read32(paddr);
             
-            if (inst_count < 15) {
+            if (inst_count < 100) {
                 printf("[32-bit] count=%llu PC=0x%08X inst=0x%08X\n", inst_count, paddr, inst);
             }
 
@@ -176,7 +176,7 @@ int main(void) {
             }
         } else {
             // --- 16ビット圧縮命令 (RVC) ---
-            if (inst_count < 15) {
+            if (inst_count < 100) {
                 printf("[16-bit RVC] count=%llu PC=0x%08X half=0x%04X\n", inst_count, paddr, half);
             }
 
