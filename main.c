@@ -3,6 +3,7 @@
 #include "pico/stdlib.h"
 #include "cpu.h"
 #include "uart.h"
+#include "decode_c.h"
 
 // ゲスト物理メモリのサイズ (256KB)
 #define RAM_SIZE (256 * 1024)
@@ -13,6 +14,7 @@ static uint8_t guest_ram[RAM_SIZE];
 // フラッシュROMの .rodata に常駐するカーネル配列
 #include "kernel.bin.inc"
 
+// --- 物理アドレスからホストのゲストRAMポインタへの変換 ---
 static inline uint8_t* paddr_to_host(uint32_t paddr) {
     if (paddr < RAM_BASE || paddr >= (RAM_BASE + RAM_SIZE)) {
         return NULL;
@@ -20,7 +22,7 @@ static inline uint8_t* paddr_to_host(uint32_t paddr) {
     return &guest_ram[paddr - RAM_BASE];
 }
 
-// --- メモリ読み込み ---
+// --- メモリ読み込み (UART MMIO フック付き) ---
 
 uint8_t mem_read8(uint32_t paddr) {
     if (uart_is_addr(paddr)) {
@@ -33,7 +35,7 @@ uint8_t mem_read8(uint32_t paddr) {
 
 uint16_t mem_read16(uint32_t paddr) {
     if (uart_is_addr(paddr)) {
-        return (uint16_t)mem_read8(paddr);
+        return (uint16_t)uart_read8(paddr);
     }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) return 0;
@@ -42,7 +44,7 @@ uint16_t mem_read16(uint32_t paddr) {
 
 uint32_t mem_read32(uint32_t paddr) {
     if (uart_is_addr(paddr)) {
-        return (uint32_t)mem_read8(paddr);
+        return (uint32_t)uart_read8(paddr);
     }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) return 0;
@@ -56,7 +58,7 @@ reg64_t mem_read64(uint32_t paddr) {
     return val;
 }
 
-// --- メモリ書き込み ---
+// --- メモリ書き込み (UART MMIO フック付き) ---
 
 void mem_write8(uint32_t paddr, uint8_t val) {
     if (uart_is_addr(paddr)) {
@@ -90,14 +92,14 @@ void mem_write64(uint32_t paddr, reg64_t val) {
     mem_write32(paddr + 4, val.hi);
 }
 
-// --- メイン関数 ---
+// --- メイン関数 & エミュレーションループ ---
 
 int main(void) {
     stdio_init_all();
     sleep_ms(2000);
 
     printf("\n========================================\n");
-    printf(" RV64 Emulator on RP2350 (Modular UART)\n");
+    printf(" RV64 Emulator on RP2350 (RVC + UART)\n");
     printf("========================================\n");
 
     RV64CPU cpu;
@@ -109,25 +111,45 @@ int main(void) {
         return -1;
     }
 
+    // フラッシュROM上の .rodata からゲストRAMのベースへコピー
     memcpy(&guest_ram[0], kernel_bin, kernel_bin_len);
     printf("Kernel binary loaded successfully. Size: %u bytes\n", (unsigned int)kernel_bin_len);
 
+    // PCの初期値を設定 (xv6のエントリポイント: 0x80000000)
     cpu.pc.lo = (uint32_t)RAM_BASE;
     cpu.pc.hi = 0x00000000;
     cpu.priv_mode = 3; 
 
-    printf("Starting CPU execution loop...\n");
+    printf("Starting CPU execution loop with RVC support...\n");
 
     unsigned long long inst_count = 0;
 
+    // フェッチ・実行メインループ
     while (!cpu.halted) {
         uint32_t paddr = cpu.pc.lo;
-        uint32_t inst = mem_read32(paddr);
+        
+        // まず下位ハーフワード（16bit）をフェッチして圧縮命令か判定
+        uint16_t half = mem_read16(paddr);
 
-        execute_instruction(&cpu, inst);
+        if ((half & 0x3) == 0x3) {
+            // 32ビット標準命令 (4バイト)
+            uint32_t inst = mem_read32(paddr);
+            
+            uint32_t old_pc = cpu.pc.lo;
+            execute_instruction(&cpu, inst);
+            
+            // 32bitデコーダ側でPCが進んでいない場合のセーフティフォールバック (+4)
+            if (cpu.pc.lo == old_pc && !cpu.halted) {
+                cpu.pc.lo += 4;
+            }
+        } else {
+            // 16ビット圧縮命令 (RVC)
+            execute_compressed_instruction(&cpu, half);
+        }
         
         inst_count++;
 
+        // 一定命令数ごとの進捗表示
         if (inst_count % 5000000 == 0) {
             printf("[Stats] Executed %llu insts. PC: 0x%08X_%08X\n", inst_count, cpu.pc.hi, cpu.pc.lo);
         }

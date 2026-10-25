@@ -22,8 +22,11 @@ uint8_t uart_read8(uint32_t paddr) {
 
 void uart_write8(uint32_t paddr, uint8_t val) {
     uint32_t offset = paddr - UART_BASE;
+    
+    // デバッグ用：UART領域に何か書き込まれたらPCと一緒に即座に画面に叩き出す
+    printf("[UART WRITE] addr=0x%08X, val=0x%02X ('%c')\n", paddr, val, (val >= 32 && val < 127) ? val : '.');
+    
     if (offset == 0) {
-        // THR (Transmit Holding Register): 実機シリアル（USB/UART）へ出力
         putchar(val);
         fflush(stdout);
     }
