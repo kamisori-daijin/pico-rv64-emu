@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-// --- 純32bit筆算型ヘルパー (M33ネイティブ演算最適化) ---
+// --- 純32bit筆算型ヘルパー  ---
 
 static inline void reg64_add(reg64_t *d, reg64_t a, reg64_t b) {
     uint32_t lo = a.lo + b.lo;
@@ -300,47 +300,54 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             break;
 
         case 0x73:
-            {
-                uint32_t csr_addr = inst >> 20;
-                if (funct3 == 0x0 && funct7 == 0x18) {
-                    cpu->pc = cpu->mepc;
-                    return;
-                } else if (funct3 == 0x0 && funct7 == 0x10) {
-                    cpu->pc = cpu->sepc;
-                    return;
-                } else if (funct3 == 0x0 && (inst & 0xFE000FFF) == 0x10200073) {
-                    cpu->halted = true;
-                } else {
-                    uint32_t val_lo = 0;
-                    uint32_t val_hi = 0;
-        
-                    if (csr_addr == 0xF14) {
-                        // mhartid: ハードウェアスレッドID (常に 0)
-                        val_lo = 0;
-                        val_hi = 0;
-                    } else if (csr_addr == 0xC01 || csr_addr == 0xC00) {
-                        // time / cycle カウンタ類
-                        val_lo = 0;
-                        val_hi = 0;
-                    } else if (csr_addr == 0x100) {
-                        // sstatus
-                        val_lo = cpu->sstatus.lo;
-                        val_hi = cpu->sstatus.hi;
-                    } else if (csr_addr == 0x180) {
-                        // satp
-                        val_lo = cpu->satp.lo;
-                        val_hi = cpu->satp.hi;
-                        cpu->satp = cpu->x[rs1];
+                    {
+                        uint32_t csr_addr = inst >> 20;
+                        if (funct3 == 0x0 && funct7 == 0x18) {
+                            // mret
+                            cpu->pc = cpu->mepc;
+                            return;
+                        } else if (funct3 == 0x0 && funct7 == 0x10) {
+                            // sret
+                            cpu->pc = cpu->sepc;
+                            return;
+                        } else if (funct3 == 0x0 && (inst & 0xFE000FFF) == 0x10200073) {
+                            // ecall / ebreak / wfi 等
+                            printf("[CSR HALT] ecall/halt requested at PC=0x%08X\n", cpu->pc.lo);
+                            cpu->halted = true;
+                            return;
+                        } else {
+                            uint32_t val_lo = 0;
+                            uint32_t val_hi = 0;
+                
+                            if (csr_addr == 0xF14) {
+                                // mhartid
+                                val_lo = 0;
+                                val_hi = 0;
+                            } else if (csr_addr == 0xC01 || csr_addr == 0xC00) {
+                                // time / cycle
+                                val_lo = 0;
+                                val_hi = 0;
+                            } else if (csr_addr == 0x100) {
+                                // sstatus
+                                val_lo = cpu->sstatus.lo;
+                                val_hi = cpu->sstatus.hi;
+                            } else if (csr_addr == 0x180) {
+                                // satp
+                                val_lo = cpu->satp.lo;
+                                val_hi = cpu->satp.hi;
+                                cpu->satp = cpu->x[rs1];
+                            } else {
+                                // 未実装のCSRが呼ばれた！ここでアドレスを暴く
+                                printf("[UNKNOWN CSR] addr=0x%03X (inst=0x%08X) at PC=0x%08X\n", csr_addr, inst, cpu->pc.lo);
+                            }
+                
+                            if (rd != 0) {
+                                cpu->x[rd].lo = val_lo;
+                                cpu->x[rd].hi = val_hi;
+                            }
+                        }
                     }
-        
-                    if (rd != 0) {
-                        cpu->x[rd].lo = val_lo;
-                        cpu->x[rd].hi = val_hi;
-                    }
-                }
-            }
-            break;
-
+                    break;
         case 0x2F:
             if ((funct7 & 0x7C) == 0x08) {
                 uint32_t paddr = cpu->x[rs1].lo;
@@ -354,7 +361,9 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             break;
 
         default:
-            break;
+                printf("[UNKNOWN 32-bit INST] inst=0x%08X at PC=0x%08X (opcode=0x%02X)\n", inst, cpu->pc.lo, opcode);
+                cpu->halted = true;
+                break;
     }
 
     reg64_t four = { .lo = 4, .hi = 0 };
