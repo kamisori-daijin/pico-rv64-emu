@@ -215,8 +215,8 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x3) {
-                // c.ldsp (★修正: 正しい uimm ビット配置)
-                uint32_t uimm = (((inst >> 4) & 0x7) << 3) | (((inst >> 12) & 0x1) << 6) | (((inst >> 2) & 0x3) << 7);
+                // c.ldsp (正確な offset[5|4:3|8:6] 抽出)
+                uint32_t uimm = (((inst >> 4) & 0x7) << 6) | (((inst >> 12) & 0x1) << 5) | (((inst >> 2) & 0x3) << 3);
                 uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
                 reg64_t val = mem_read64(addr);
                 if (rd_rs1 != 0) {
@@ -266,10 +266,13 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x7) {
-                // c.sdsp (★修正: 正しい uimm ビット配置)
-                uint32_t uimm = (((inst >> 7) & 0x7) << 3) | (((inst >> 10) & 0x7) << 6);
+                // c.sdsp (★修正: 正しい offset[5:3|8:6] 抽出)
+                uint32_t uimm = (((inst >> 10) & 0x7) << 6) | (((inst >> 7) & 0x7) << 3);
                 uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
                 mem_write64(addr, cpu->x[rs2]);
+                if (rs2 == 1) {
+                    printf("[DEBUG c.sdsp] STORE ra (x1) val=0x%08X_%08X to addr=0x%08X\n", cpu->x[1].hi, cpu->x[1].lo, addr);
+                }
                 cpu->pc.lo += 2;
                 return;
             }
