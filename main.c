@@ -140,6 +140,10 @@ int main(void) {
     cpu.pc.lo = (uint32_t)RAM_BASE;
     cpu.pc.hi = 0x00000000;
     cpu.priv_mode = 3; 
+    
+    // ★スタックポインタ (sp = x2) の初期値をRAMの終端に設定！
+    cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE); // 0x80040000
+    cpu.x[2].hi = 0x00000000;
 
     printf("Starting CPU execution loop with RVC support...\n");
 

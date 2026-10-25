@@ -339,6 +339,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                             case 0x306: target_csr = &cpu->mcounteren; break;
                             case 0x30A: target_csr = &cpu->menvcfg; break;
                             case 0x341: target_csr = &cpu->mepc; break;
+                            case 0x14D: target_csr = &cpu->stimecmp; break; // 追加！
                             default:
                                 // 未知のCSRはダミーで受け止めておく（止まらないようにする）
                                 // 必要に応じてここで [UNKNOWN CSR] を出してもよい

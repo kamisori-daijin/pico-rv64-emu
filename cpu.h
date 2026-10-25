@@ -27,6 +27,7 @@ typedef struct {
     reg64_t sie;        // 追加
     reg64_t mcounteren; // 追加
     reg64_t menvcfg;    // 追加
+    reg64_t stimecmp;
     
     uint32_t priv_mode;  // 0: User, 1: Supervisor, 3: Machine
     bool halted;         // wfi 等での停止フラグ
