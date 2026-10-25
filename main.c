@@ -23,7 +23,7 @@ static inline uint8_t* paddr_to_host(uint32_t paddr) {
     return &guest_ram[paddr - RAM_BASE];
 }
 
-// --- メモリ読み込み (UART / CLINT MMIO フック付き) ---
+// --- メモリ読み込み (UART / CLINT MMIO フック付き・非アライン安全) ---
 
 uint8_t mem_read8(uint32_t paddr) {
     if (uart_is_addr(paddr)) {
@@ -40,7 +40,9 @@ uint16_t mem_read16(uint32_t paddr) {
     }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) return 0;
-    return *(uint16_t *)host_ptr;
+    uint16_t val;
+    __builtin_memcpy(&val, host_ptr, sizeof(val));
+    return val;
 }
 
 uint32_t mem_read32(uint32_t paddr) {
@@ -52,7 +54,9 @@ uint32_t mem_read32(uint32_t paddr) {
     }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) return 0;
-    return *(uint32_t *)host_ptr;
+    uint32_t val;
+    __builtin_memcpy(&val, host_ptr, sizeof(val));
+    return val;
 }
 
 reg64_t mem_read64(uint32_t paddr) {
@@ -62,7 +66,7 @@ reg64_t mem_read64(uint32_t paddr) {
     return val;
 }
 
-// --- メモリ書き込み (UART / CLINT MMIO フック付き) ---
+// --- メモリ書き込み (UART / CLINT MMIO フック付き・非アライン安全) ---
 
 void mem_write8(uint32_t paddr, uint8_t val) {
     if (uart_is_addr(paddr)) {
@@ -79,7 +83,9 @@ void mem_write16(uint32_t paddr, uint16_t val) {
         return;
     }
     uint8_t *host_ptr = paddr_to_host(paddr);
-    if (host_ptr) *(uint16_t *)host_ptr = val;
+    if (host_ptr) {
+        __builtin_memcpy(host_ptr, &val, sizeof(val));
+    }
 }
 
 void mem_write32(uint32_t paddr, uint32_t val) {
@@ -92,7 +98,9 @@ void mem_write32(uint32_t paddr, uint32_t val) {
         return;
     }
     uint8_t *host_ptr = paddr_to_host(paddr);
-    if (host_ptr) *(uint32_t *)host_ptr = val;
+    if (host_ptr) {
+        __builtin_memcpy(host_ptr, &val, sizeof(val));
+    }
 }
 
 void mem_write64(uint32_t paddr, reg64_t val) {
@@ -110,7 +118,7 @@ int main(void) {
         printf("Waiting for serial terminal... %d seconds\n", i);
         sleep_ms(1000);
     }
-    printf("HELLO WORLD FROM RP2350!\n");
+
     printf("\n========================================\n");
     printf(" RV64 Emulator on RP2350 (RVC + UART)\n");
     printf("========================================\n");
@@ -136,59 +144,52 @@ int main(void) {
     printf("Starting CPU execution loop with RVC support...\n");
 
     unsigned long long inst_count = 0;
-    
-        // フェッチ・実行メインループ
-        while (!cpu.halted) {
-            uint32_t paddr = cpu.pc.lo;
-            
-            // まず、次の命令の先頭16ビット（ハーフワード）をフェッチ
-            uint16_t half = mem_read16(paddr);
-    
-            // 【判定ルール】最下位2ビット（bit 1-0）で命令長を完璧に見分ける
-            //  - 11 (0x3) ならば 32ビット標準命令
-            //  - 00, 01, 10 ならば 16ビット圧縮命令 (RVC)
-            if ((half & 0x3) == 0x3) {
-                // --- 32ビット標準命令の処理 ---
-                
-                // 32ビット命令は必ず 4バイトアライメント（PCの下位2ビットが 0）であるべき
-                if (paddr % 4 != 0) {
-                    printf("[ERROR] Unaligned 32-bit instruction fetch! PC = 0x%08X (half = 0x%04X)\n", paddr, half);
-                    cpu.halted = true;
-                    break;
-                }
-    
-                uint32_t inst = mem_read32(paddr);
-                
-                // デバッグ用トレーサー（最初の20命令だけ詳細表示）
-                if (inst_count < 20) {
-                    printf("[32-bit] count=%llu PC=0x%08X inst=0x%08X\n", inst_count, paddr, inst);
-                }
-    
-                uint32_t old_pc = cpu.pc.lo;
-                execute_instruction(&cpu, inst);
-                
-                // 32bitデコーダ側でPCが自発的に進んでいない場合のセーフティフォールバック (+4)
-                if (cpu.pc.lo == old_pc && !cpu.halted) {
-                    cpu.pc.lo += 4;
-                }
-            } else {
-                // --- 16ビット圧縮命令 (RVC) の処理 ---
-                
-                // デバッグ用トレーサー（最初の20命令だけ詳細表示）
-                if (inst_count < 20) {
-                    printf("[16-bit RVC] count=%llu PC=0x%08X half=0x%04X\n", inst_count, paddr, half);
-                }
-    
-                execute_compressed_instruction(&cpu, half);
+
+    // フェッチ・実行メインループ
+    while (!cpu.halted) {
+        uint32_t paddr = cpu.pc.lo;
+        
+        // 下位ハーフワードをフェッチ
+        uint16_t half = mem_read16(paddr);
+
+        // 最下位2ビットで命令長を判定 (11なら32bit、それ以外は16bit RVC)
+        if ((half & 0x3) == 0x3) {
+            // --- 32ビット標準命令 ---
+            // 圧縮命令の直後など偶数番地(2の倍数)になり得るので、2の倍数であることを確認
+            if (paddr % 2 != 0) {
+                printf("[ERROR] Misaligned instruction fetch! PC = 0x%08X\n", paddr);
+                cpu.halted = true;
+                break;
             }
+
+            uint32_t inst = mem_read32(paddr);
             
-            inst_count++;
-    
-            // 一定命令数ごとの進捗表示
-            if (inst_count % 5000000 == 0) {
-                printf("[Stats] Executed %llu insts. PC: 0x%08X_%08X\n", inst_count, cpu.pc.hi, cpu.pc.lo);
+            if (inst_count < 15) {
+                printf("[32-bit] count=%llu PC=0x%08X inst=0x%08X\n", inst_count, paddr, inst);
             }
+
+            uint32_t old_pc = cpu.pc.lo;
+            execute_instruction(&cpu, inst);
+            
+            if (cpu.pc.lo == old_pc && !cpu.halted) {
+                cpu.pc.lo += 4;
+            }
+        } else {
+            // --- 16ビット圧縮命令 (RVC) ---
+            if (inst_count < 15) {
+                printf("[16-bit RVC] count=%llu PC=0x%08X half=0x%04X\n", inst_count, paddr, half);
+            }
+
+            execute_compressed_instruction(&cpu, half);
         }
+        
+        inst_count++;
+
+        // 一定命令数ごとの進捗表示
+        if (inst_count % 5000000 == 0) {
+            printf("[Stats] Executed %llu insts. PC: 0x%08X_%08X\n", inst_count, cpu.pc.hi, cpu.pc.lo);
+        }
+    }
 
     printf("CPU halted after executing %llu instructions.\n", inst_count);
     
