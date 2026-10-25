@@ -216,9 +216,11 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x3) {
-                            // c.ldsp
+                            // c.ldsp (公式仕様: offset[5|4:3|8:6] を抽出して左3ビット(8倍)シフト)
                             uint32_t uimm = (((inst >> 12) & 0x1) << 5) | 
-                                            (((inst >> 6) & 0x3) << 3); // 調整版
+                                            (((inst >> 6) & 0x3) << 3) | 
+                                            (((inst >> 2) & 0x7) << 6);
+                            
                             uint32_t sp_val = (uint32_t)get_reg64(cpu, 2);
                             uint32_t addr = sp_val + uimm;
                             reg64_t val = mem_read64(addr);
