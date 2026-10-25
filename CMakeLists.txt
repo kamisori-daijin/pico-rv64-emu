@@ -16,8 +16,9 @@ add_executable(rv64_emu
     main.c
     decode_i.c
     decode_c.c
-    ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
     uart.c
+    clint.c   # ← ここに追加
+    ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
 )
 
 # 4. 標準ライブラリとダブルリセット用ライブラリをリンク

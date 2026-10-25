@@ -3,6 +3,7 @@
 #include "pico/stdlib.h"
 #include "cpu.h"
 #include "uart.h"
+#include "clint.h"
 #include "decode_c.h"
 
 // ゲスト物理メモリのサイズ (256KB)
@@ -22,7 +23,7 @@ static inline uint8_t* paddr_to_host(uint32_t paddr) {
     return &guest_ram[paddr - RAM_BASE];
 }
 
-// --- メモリ読み込み (UART MMIO フック付き) ---
+// --- メモリ読み込み (UART / CLINT MMIO フック付き) ---
 
 uint8_t mem_read8(uint32_t paddr) {
     if (uart_is_addr(paddr)) {
@@ -46,6 +47,9 @@ uint32_t mem_read32(uint32_t paddr) {
     if (uart_is_addr(paddr)) {
         return (uint32_t)uart_read8(paddr);
     }
+    if (clint_is_addr(paddr)) {
+        return clint_read32(paddr);
+    }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) return 0;
     return *(uint32_t *)host_ptr;
@@ -58,7 +62,7 @@ reg64_t mem_read64(uint32_t paddr) {
     return val;
 }
 
-// --- メモリ書き込み (UART MMIO フック付き) ---
+// --- メモリ書き込み (UART / CLINT MMIO フック付き) ---
 
 void mem_write8(uint32_t paddr, uint8_t val) {
     if (uart_is_addr(paddr)) {
@@ -83,6 +87,10 @@ void mem_write32(uint32_t paddr, uint32_t val) {
         uart_write8(paddr, (uint8_t)(val & 0xFF));
         return;
     }
+    if (clint_is_addr(paddr)) {
+        clint_write32(paddr, val);
+        return;
+    }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (host_ptr) *(uint32_t *)host_ptr = val;
 }
@@ -97,6 +105,11 @@ void mem_write64(uint32_t paddr, reg64_t val) {
 int main(void) {
     stdio_init_all();
     sleep_ms(2000);
+
+    for (int i = 5; i > 0; i--) {
+        printf("Waiting for serial terminal... %d seconds\n", i);
+        sleep_ms(1000);
+    }
 
     printf("\n========================================\n");
     printf(" RV64 Emulator on RP2350 (RVC + UART)\n");

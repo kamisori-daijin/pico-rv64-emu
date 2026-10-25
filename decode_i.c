@@ -311,12 +311,31 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 } else if (funct3 == 0x0 && (inst & 0xFE000FFF) == 0x10200073) {
                     cpu->halted = true;
                 } else {
-                    if (csr_addr == 0xC01) {
-                        cpu->x[rd].lo = 0;
-                        cpu->x[rd].hi = 0;
+                    uint32_t val_lo = 0;
+                    uint32_t val_hi = 0;
+        
+                    if (csr_addr == 0xF14) {
+                        // mhartid: ハードウェアスレッドID (常に 0)
+                        val_lo = 0;
+                        val_hi = 0;
+                    } else if (csr_addr == 0xC01 || csr_addr == 0xC00) {
+                        // time / cycle カウンタ類
+                        val_lo = 0;
+                        val_hi = 0;
+                    } else if (csr_addr == 0x100) {
+                        // sstatus
+                        val_lo = cpu->sstatus.lo;
+                        val_hi = cpu->sstatus.hi;
                     } else if (csr_addr == 0x180) {
-                        cpu->x[rd] = cpu->satp;
+                        // satp
+                        val_lo = cpu->satp.lo;
+                        val_hi = cpu->satp.hi;
                         cpu->satp = cpu->x[rs1];
+                    }
+        
+                    if (rd != 0) {
+                        cpu->x[rd].lo = val_lo;
+                        cpu->x[rd].hi = val_hi;
                     }
                 }
             }

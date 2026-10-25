@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// 64ビットレジスタを32ビットのペアで表現（Cortex-M33最適化）
+// 64ビットレジスタを32ビットのペアで表現
 typedef struct {
     uint32_t lo; // 下位32ビット
     uint32_t hi; // 上位32ビット
