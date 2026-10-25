@@ -110,7 +110,7 @@ int main(void) {
         printf("Waiting for serial terminal... %d seconds\n", i);
         sleep_ms(1000);
     }
-
+    printf("HELLO WORLD FROM RP2350!\n");
     printf("\n========================================\n");
     printf(" RV64 Emulator on RP2350 (RVC + UART)\n");
     printf("========================================\n");
@@ -139,34 +139,42 @@ int main(void) {
 
     // フェッチ・実行メインループ
     while (!cpu.halted) {
-        uint32_t paddr = cpu.pc.lo;
-        
-        // まず下位ハーフワード（16bit）をフェッチして圧縮命令か判定
-        uint16_t half = mem_read16(paddr);
-
-        if ((half & 0x3) == 0x3) {
-            // 32ビット標準命令 (4バイト)
-            uint32_t inst = mem_read32(paddr);
+            uint32_t paddr = cpu.pc.lo;
             
-            uint32_t old_pc = cpu.pc.lo;
-            execute_instruction(&cpu, inst);
-            
-            // 32bitデコーダ側でPCが進んでいない場合のセーフティフォールバック (+4)
-            if (cpu.pc.lo == old_pc && !cpu.halted) {
-                cpu.pc.lo += 4;
+            // 最初から数えて最初の100命令は、毎ステップPCとフェッチデータを垂れ流す
+            if (inst_count < 100) {
+                uint16_t test_half = mem_read16(paddr);
+                printf("[TRACE] count=%llu PC=0x%08X half=0x%04X\n", inst_count, paddr, test_half);
             }
-        } else {
-            // 16ビット圧縮命令 (RVC)
-            execute_compressed_instruction(&cpu, half);
+    
+            uint16_t half = mem_read16(paddr);
+    
+            if ((half & 0x3) == 0x3) {
+                uint32_t inst = mem_read32(paddr);
+                if (inst_count < 100) {
+                    printf(" -> 32bit inst=0x%08X\n", inst);
+                }
+                uint32_t old_pc = cpu.pc.lo;
+                execute_instruction(&cpu, inst);
+                
+                if (cpu.pc.lo == old_pc && !cpu.halted) {
+                    cpu.pc.lo += 4;
+                }
+            } else {
+                if (inst_count < 100) {
+                    printf(" -> 16bit RVC\n");
+                }
+                execute_compressed_instruction(&cpu, half);
+            }
+            
+            inst_count++;
+    
+            // もし途中で cpu.halted が真になったら、その瞬間のPCをデカく叫ばせる
+            if (cpu.halted) {
+                printf("[HALT DETECTED] at inst_count=%llu, PC=0x%08X_%08X\n", inst_count, cpu.pc.hi, cpu.pc.lo);
+                break;
+            }
         }
-        
-        inst_count++;
-
-        // 一定命令数ごとの進捗表示
-        if (inst_count % 5000000 == 0) {
-            printf("[Stats] Executed %llu insts. PC: 0x%08X_%08X\n", inst_count, cpu.pc.hi, cpu.pc.lo);
-        }
-    }
 
     printf("CPU halted after executing %llu instructions.\n", inst_count);
     
