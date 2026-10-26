@@ -228,12 +228,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                     case 0x0: mem_write8(paddr, (uint8_t)cpu->x[rs2].lo); break;
                     case 0x1: mem_write16(paddr, (uint16_t)cpu->x[rs2].lo); break;
                     case 0x2: mem_write32(paddr, cpu->x[rs2].lo); break;
-                    case 0x3: 
-                        mem_write64(paddr, cpu->x[rs2]); 
-                        if (rs2 == 1) {
-                            printf("[DEBUG sd] STORE ra (x1) val=0x%08X_%08X to addr=0x%08X\n", cpu->x[1].hi, cpu->x[1].lo, paddr);
-                        }
-                        break;
+                    case 0x3: mem_write64(paddr, cpu->x[rs2]); break;
                 }
             }
             break;
@@ -320,7 +315,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                     if (funct7 == 0x18) {        // mret
                         cpu->pc = cpu->mepc;
                         return;
-                    } else if (funct7 == 0x08) { // sret (修正箇所)
+                    } else if (funct7 == 0x08) { // sret
                         cpu->pc = cpu->sepc;
                         return;
                     }
@@ -396,12 +391,73 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x2F:
-            if ((funct7 & 0x7C) == 0x08) {
-                uint32_t paddr = cpu->x[rs1].lo;
-                uint32_t old_val = mem_read32(paddr);
-                mem_write32(paddr, cpu->x[rs2].lo);
-                reg64_sext32(&cpu->x[rd], old_val);
+        case 0x2F: // ★ Atomic 命令群 (AMO) の本格サポート
+            {
+                uint32_t funct5 = (funct7 >> 2) & 0x1F;
+                uint32_t paddr  = cpu->x[rs1].lo;
+                bool is_64      = (funct3 == 3);
+
+                if (is_64) {
+                    // --- 64-bit AMO ---
+                    reg64_t old_val = mem_read64(paddr);
+                    uint64_t old_u64 = ((uint64_t)old_val.hi << 32) | old_val.lo;
+                    uint64_t src_u64 = ((uint64_t)cpu->x[rs2].hi << 32) | cpu->x[rs2].lo;
+                    uint64_t new_u64 = 0;
+
+                    switch (funct5) {
+                        case 0x01: new_u64 = src_u64; break;             // amoswap.d
+                        case 0x00: new_u64 = old_u64 + src_u64; break;   // amoadd.d
+                        case 0x08: new_u64 = old_u64 | src_u64; break;   // amoor.d
+                        case 0x0C: new_u64 = old_u64 & src_u64; break;   // amoand.d
+                        case 0x04: new_u64 = old_u64 ^ src_u64; break;   // amoxor.d
+                        case 0x02: new_u64 = old_u64; break;             // lr.d
+                        case 0x03: new_u64 = src_u64; break;             // sc.d
+                        default: new_u64 = src_u64; break;
+                    }
+
+                    if (funct5 != 0x02) { // lr.d 以外はメモリ更新
+                        reg64_t write_val = { .lo = (uint32_t)new_u64, .hi = (uint32_t)(new_u64 >> 32) };
+                        mem_write64(paddr, write_val);
+                    }
+
+                    if (rd != 0) {
+                        if (funct5 == 0x03) { // sc.d 成功時は 0
+                            cpu->x[rd].lo = 0;
+                            cpu->x[rd].hi = 0;
+                        } else {
+                            cpu->x[rd] = old_val;
+                        }
+                    }
+                } else {
+                    // --- 32-bit AMO ---
+                    uint32_t old_val = mem_read32(paddr);
+                    uint32_t src_val = cpu->x[rs2].lo;
+                    uint32_t new_val = 0;
+
+                    switch (funct5) {
+                        case 0x01: new_val = src_val; break;             // amoswap.w
+                        case 0x00: new_val = old_val + src_val; break;   // amoadd.w
+                        case 0x08: new_val = old_val | src_val; break;   // amoor.w
+                        case 0x0C: new_val = old_val & src_val; break;   // amoand.w
+                        case 0x04: new_val = old_val ^ src_val; break;   // amoxor.w
+                        case 0x02: new_val = old_val; break;             // lr.w
+                        case 0x03: new_val = src_val; break;             // sc.w
+                        default: new_val = src_val; break;
+                    }
+
+                    if (funct5 != 0x02) { // lr.w 以外はメモリ更新
+                        mem_write32(paddr, new_val);
+                    }
+
+                    if (rd != 0) {
+                        if (funct5 == 0x03) { // sc.w 成功時は 0
+                            cpu->x[rd].lo = 0;
+                            cpu->x[rd].hi = 0;
+                        } else {
+                            reg64_sext32(&cpu->x[rd], old_val);
+                        }
+                    }
+                }
             }
             break;
 
