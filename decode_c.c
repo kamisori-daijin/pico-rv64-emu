@@ -283,7 +283,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                             
                             cpu->pc.lo += 2;
                             return;
-            }
+                        }
             break;
         }
     }
