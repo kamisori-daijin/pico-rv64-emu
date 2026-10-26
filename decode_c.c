@@ -30,9 +30,15 @@ static inline uint32_t get_pc32(RV64CPU *cpu) {
     return cpu->pc.lo;
 }
 
+// ★ 修正: PCを更新する際、0x80000000以上は 0xFFFFFFFF に符号拡張する
 static inline void set_pc32(RV64CPU *cpu, uint32_t val) {
     cpu->pc.lo = val;
-    cpu->pc.hi = 0;
+    cpu->pc.hi = ((int32_t)val < 0) ? 0xFFFFFFFF : 0x00000000;
+}
+
+static inline void advance_pc2(RV64CPU *cpu) {
+    cpu->pc.lo += 2;
+    cpu->pc.hi = ((int32_t)cpu->pc.lo < 0) ? 0xFFFFFFFF : 0x00000000;
 }
 
 void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
@@ -55,7 +61,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 }
                 uint64_t sp = get_reg64(cpu, 2);
                 set_reg64(cpu, rd, sp + nzuimm);
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x2) {
                 // c.lw
@@ -64,8 +70,8 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 uint32_t rd = c_reg((inst >> 2) & 0x7);
                 uint32_t addr = (uint32_t)get_reg64(cpu, rs1) + uimm;
                 uint32_t val = mem_read32(addr);
-                set_reg64(cpu, rd, (uint64_t)(int32_t)val);
-                cpu->pc.lo += 2;
+                set_reg64(cpu, rd, (int64_t)(int32_t)val);
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x3) {
                 // c.ld
@@ -75,7 +81,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 uint32_t addr = (uint32_t)get_reg64(cpu, rs1) + uimm;
                 reg64_t val = mem_read64(addr);
                 cpu->x[rd] = val;
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x6) {
                 // c.sw
@@ -84,7 +90,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 uint32_t rs2 = c_reg((inst >> 2) & 0x7);
                 uint32_t addr = (uint32_t)get_reg64(cpu, rs1) + uimm;
                 mem_write32(addr, cpu->x[rs2].lo);
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x7) {
                 // c.sd
@@ -93,7 +99,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 uint32_t rs2 = c_reg((inst >> 2) & 0x7);
                 uint32_t addr = (uint32_t)get_reg64(cpu, rs1) + uimm;
                 mem_write64(addr, cpu->x[rs2]);
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             }
             break;
@@ -108,7 +114,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 if (rd_rs1 != 0) {
                     set_reg64(cpu, rd_rs1, get_reg64(cpu, rd_rs1) + imm);
                 }
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x1) {
                 // c.addiw
@@ -117,13 +123,13 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                     int32_t val = (int32_t)cpu->x[rd_rs1].lo + imm;
                     set_reg64(cpu, rd_rs1, (int64_t)val);
                 }
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x2) {
                 // c.li
                 int32_t imm = ((inst >> 12) & 0x1) ? (int32_t)(((inst >> 2) & 0x1f) | 0xffffffe0) : (int32_t)((inst >> 2) & 0x1f);
                 set_reg64(cpu, rd_rs1, (int64_t)imm);
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x3) {
                 if (rd_rs1 == 2) {
@@ -134,14 +140,14 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                                     (((inst >> 5)  & 0x1) << 6) |
                                     (((inst >> 6)  & 0x1) << 4);
                     if ((inst >> 12) & 0x1) nzimm |= 0xfffffc00;
-                    set_reg64(cpu, 2, get_reg64(cpu, 2) + nzimm);
+                    set_reg64(cpu, 2, get_reg64(cpu, 2) + (int64_t)nzimm);
                 } else if (rd_rs1 != 0) {
                     // c.lui
                     int32_t imm = (((inst >> 12) & 0x1) << 17) | (((inst >> 2) & 0x1f) << 12);
                     if ((inst >> 12) & 0x1) imm |= 0xfffc0000;
                     set_reg64(cpu, rd_rs1, (int64_t)imm);
                 }
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x4) {
                 uint32_t funct2 = (inst >> 10) & 0x3;
@@ -174,7 +180,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                         else if (sub_funct == 0x1) set_reg64(cpu, rd, (int64_t)(int32_t)(v1 + v2));
                     }
                 }
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x5) {
                 // c.j
@@ -183,7 +189,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 set_pc32(cpu, get_pc32(cpu) + offset);
                 return;
             } else if (funct3 == 0x6) {
-                // c.beqz (修正: 正確な offset[8:1] ビット抽出)
+                // c.beqz
                 int32_t offset = (((inst >> 12) & 1) << 8) |
                                  (((inst >> 5)  & 3) << 6) |
                                  (((inst >> 2)  & 1) << 5) |
@@ -195,10 +201,10 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                     set_pc32(cpu, get_pc32(cpu) + offset);
                     return;
                 }
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x7) {
-                // c.bnez (修正: 正確な offset[8:1] ビット抽出)
+                // c.bnez
                 int32_t offset = (((inst >> 12) & 1) << 8) |
                                  (((inst >> 5)  & 3) << 6) |
                                  (((inst >> 2)  & 1) << 5) |
@@ -210,7 +216,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                     set_pc32(cpu, get_pc32(cpu) + offset);
                     return;
                 }
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             }
             break;
@@ -226,15 +232,15 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 if (rd_rs1 != 0) {
                     set_reg64(cpu, rd_rs1, get_reg64(cpu, rd_rs1) << shamt);
                 }
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x2) {
                 // c.lwsp
                 uint32_t uimm = (((inst >> 4) & 0x7) << 2) | (((inst >> 12) & 0x1) << 5) | (((inst >> 2) & 0x3) << 6);
                 uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
                 uint32_t val = mem_read32(addr);
-                if (rd_rs1 != 0) set_reg64(cpu, rd_rs1, (int32_t)val);
-                cpu->pc.lo += 2;
+                if (rd_rs1 != 0) set_reg64(cpu, rd_rs1, (int64_t)(int32_t)val);
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x3) {
                 // c.ldsp
@@ -249,7 +255,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 if (rd_rs1 != 0) {
                     cpu->x[rd_rs1] = val;
                 }
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x4) {
                 uint32_t bit12 = (inst >> 12) & 0x1;
@@ -262,20 +268,22 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                     } else {
                         // c.mv
                         set_reg64(cpu, rd_rs1, get_reg64(cpu, rs2));
-                        cpu->pc.lo += 2;
+                        advance_pc2(cpu);
                         return;
                     }
                 } else {
                     if (rs2 == 0) {
-                        // c.jalr
+                        // c.jalr (★ 修正: 戻りアドレスの 64bit 符号拡張)
                         uint32_t target = (uint32_t)get_reg64(cpu, rd_rs1) & ~1U;
-                        set_reg64(cpu, 1, get_pc32(cpu) + 2);
+                        uint32_t next_pc_lo = get_pc32(cpu) + 2;
+                        uint64_t next_pc = ((uint64_t)(((int32_t)next_pc_lo < 0) ? 0xFFFFFFFFU : 0U) << 32) | next_pc_lo;
+                        set_reg64(cpu, 1, next_pc);
                         set_pc32(cpu, target);
                         return;
                     } else {
                         // c.add
                         set_reg64(cpu, rd_rs1, get_reg64(cpu, rd_rs1) + get_reg64(cpu, rs2));
-                        cpu->pc.lo += 2;
+                        advance_pc2(cpu);
                         return;
                     }
                 }
@@ -284,14 +292,14 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 uint32_t uimm = (((inst >> 9) & 0xf) << 2) | (((inst >> 7) & 0x3) << 6);
                 uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
                 mem_write32(addr, cpu->x[rs2].lo);
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x7) {
                 // c.sdsp
                 uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 7) & 0x7) << 6);
                 uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
                 mem_write64(addr, cpu->x[rs2]);
-                cpu->pc.lo += 2;
+                advance_pc2(cpu);
                 return;
             }
             break;
