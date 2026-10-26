@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-// --- 純32bit筆算型ヘルパー  ---
+// --- 純32bit筆算型ヘルパー ---
 
 static inline void reg64_add(reg64_t *d, reg64_t a, reg64_t b) {
     uint32_t lo = a.lo + b.lo;
@@ -107,10 +107,9 @@ static inline bool reg64_eq(reg64_t a, reg64_t b) {
     return (a.lo == b.lo) && (a.hi == b.hi);
 }
 
-// U-type (20bit即値) を正しく符号付き32bitに変換するヘルパー
 static inline int32_t get_u_imm(uint32_t inst) {
     int32_t imm = (int32_t)(inst & 0xFFFFF000);
-    return imm; // inst & 0xFFFFF000 はすでに上位20bitを左12bitシフトした形
+    return imm;
 }
 
 void execute_instruction(RV64CPU *cpu, uint32_t inst) {
@@ -122,7 +121,6 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
     uint32_t funct7 = (inst >> 25) & 0x7F;
 
     int32_t imm_i = (int32_t)inst >> 20;
-    // 修正済みの正確な S-type イミディエイト抽出
     int32_t imm_s = (int32_t)(((inst >> 25) & 0x7F) << 5) | ((inst >> 7) & 0x1F);
     if (imm_s & 0x800) {
         imm_s |= 0xFFFFF000;
@@ -319,14 +317,11 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 uint32_t csr_addr = inst >> 20;
                 
                 if (funct3 == 0x0) {
-                    if (funct7 == 0x18) {
+                    if (funct7 == 0x18) {        // mret
                         cpu->pc = cpu->mepc;
                         return;
-                    } else if (funct7 == 0x10) {
+                    } else if (funct7 == 0x08) { // sret (修正箇所)
                         cpu->pc = cpu->sepc;
-                        return;
-                    } else if ((inst & 0xFE000FFF) == 0x10200073) {
-                        cpu->halted = true;
                         return;
                     }
                 }

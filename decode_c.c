@@ -1,18 +1,16 @@
 #include "decode_c.h"
 #include <stdio.h>
 
-// 外部メモリ読み書き関数
 extern uint8_t  mem_read8(uint32_t paddr);
 extern uint16_t mem_read16(uint32_t paddr);
 extern uint32_t mem_read32(uint32_t paddr);
-extern reg64_t   mem_read64(uint32_t paddr);
+extern reg64_t  mem_read64(uint32_t paddr);
 
 extern void mem_write8(uint32_t paddr, uint8_t val);
 extern void mem_write16(uint32_t paddr, uint16_t val);
 extern void mem_write32(uint32_t paddr, uint32_t val);
 extern void mem_write64(uint32_t paddr, reg64_t val);
 
-// 3bitの圧縮レジスタ指定 (0~7) を実レジスタ番号 (8~15, s0-s7/a0-a5) に変換
 static inline uint32_t c_reg(uint32_t r3) {
     return 8 + r3;
 }
@@ -56,8 +54,8 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x2) {
-                // c.lw
-                uint32_t uimm = ((inst >> 10) & 0x7) | ((inst >> 5) & 0x1) | ((inst >> 6) & 0x1) << 5;
+                // c.lw (修正箇所)
+                uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 6) & 0x1) << 2) | (((inst >> 5) & 0x1) << 6);
                 uint32_t rs1 = c_reg((inst >> 7) & 0x7);
                 uint32_t rd = c_reg((inst >> 2) & 0x7);
                 uint32_t addr = (uint32_t)get_reg64(cpu, rs1) + uimm;
@@ -66,8 +64,8 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x3) {
-                // c.ld
-                uint32_t uimm = ((inst >> 10) & 0x7) | ((inst >> 5) & 0x3) << 3;
+                // c.ld (修正箇所)
+                uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 5) & 0x3) << 6);
                 uint32_t rs1 = c_reg((inst >> 7) & 0x7);
                 uint32_t rd = c_reg((inst >> 2) & 0x7);
                 uint32_t addr = (uint32_t)get_reg64(cpu, rs1) + uimm;
@@ -76,8 +74,8 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x6) {
-                // c.sw
-                uint32_t uimm = ((inst >> 10) & 0x7) | ((inst >> 5) & 0x1) | ((inst >> 6) & 0x1) << 5;
+                // c.sw (修正箇所)
+                uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 6) & 0x1) << 2) | (((inst >> 5) & 0x1) << 6);
                 uint32_t rs1 = c_reg((inst >> 7) & 0x7);
                 uint32_t rs2 = c_reg((inst >> 2) & 0x7);
                 uint32_t addr = (uint32_t)get_reg64(cpu, rs1) + uimm;
@@ -85,8 +83,8 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x7) {
-                // c.sd
-                uint32_t uimm = ((inst >> 10) & 0x7) | ((inst >> 5) & 0x3) << 3;
+                // c.sd (修正箇所)
+                uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 5) & 0x3) << 6);
                 uint32_t rs1 = c_reg((inst >> 7) & 0x7);
                 uint32_t rs2 = c_reg((inst >> 2) & 0x7);
                 uint32_t addr = (uint32_t)get_reg64(cpu, rs1) + uimm;
@@ -197,7 +195,6 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
             uint32_t funct3 = (inst >> 13) & 0x7;
             uint32_t rd_rs1 = (inst >> 7) & 0x1f;
             uint32_t rs2 = (inst >> 2) & 0x1f;
-    
 
             if (funct3 == 0x0) {
                 // c.slli
@@ -216,31 +213,26 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x3) {
-                            // c.ldsp (公式仕様: offset[5|4:3|8:6] を抽出して左3ビット(8倍)シフト)
-                            uint32_t uimm = (((inst >> 12) & 0x1) << 5) | 
-                                            (((inst >> 6) & 0x3) << 3) | 
-                                            (((inst >> 2) & 0x7) << 6);
-                            
-                            uint32_t sp_val = (uint32_t)get_reg64(cpu, 2);
-                            uint32_t addr = sp_val + uimm;
-                            reg64_t val = mem_read64(addr);
-                            
-                            printf("[DEBUG c.ldsp] sp=0x%08X uimm=%u addr=0x%08X val=0x%08X_%08X\n", sp_val, uimm, addr, val.hi, val.lo);
-                            fflush(stdout);
-                            
-                            if (rd_rs1 != 0) {
-                                cpu->x[rd_rs1] = val;
-                            }
-                            cpu->pc.lo += 2;
-                            return;
+                // c.ldsp (修正箇所)
+                uint32_t uimm = (((inst >> 12) & 0x1) << 5) | 
+                                (((inst >> 5) & 0x3) << 3) | 
+                                (((inst >> 2) & 0x7) << 6);
+                
+                uint32_t sp_val = (uint32_t)get_reg64(cpu, 2);
+                uint32_t addr = sp_val + uimm;
+                reg64_t val = mem_read64(addr);
+                
+                if (rd_rs1 != 0) {
+                    cpu->x[rd_rs1] = val;
+                }
+                cpu->pc.lo += 2;
+                return;
             } else if (funct3 == 0x4) {
                 uint32_t bit12 = (inst >> 12) & 0x1;
                 if (bit12 == 0) {
                     if (rs2 == 0) {
                         // c.jr
                         uint32_t target = (uint32_t)get_reg64(cpu, rd_rs1);
-                        printf("[DEBUG c.jr] PC=0x%08X jumping to reg x%u (target=0x%08X, val=0x%08X_%08X)\n", 
-                               cpu->pc.lo, rd_rs1, target, cpu->x[rd_rs1].hi, cpu->x[rd_rs1].lo);
                         set_pc32(cpu, target);
                         return;
                     } else {
@@ -253,7 +245,6 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                     if (rs2 == 0) {
                         // c.jalr
                         uint32_t target = (uint32_t)get_reg64(cpu, rd_rs1);
-                        printf("[DEBUG c.jalr] PC=0x%08X jumping to reg x%u (target=0x%08X)\n", cpu->pc.lo, rd_rs1, target);
                         set_reg64(cpu, 1, get_pc32(cpu) + 2);
                         set_pc32(cpu, target);
                         return;
@@ -272,23 +263,17 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x7) {
-                            // c.sdsp (公式仕様: offset[5:3] は inst[12:10] << 3, offset[8:6] は inst[9:7] << 6)
-                            uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 7) & 0x7) << 6);
-                            uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
-                            
-                            mem_write64(addr, cpu->x[rs2]);
-                            printf("[DEBUG c.sdsp] inst=0x%04X rs2=%u addr=0x%08X val=0x%08X_%08X\n", 
-                                   inst, rs2, addr, cpu->x[rs2].hi, cpu->x[rs2].lo);
-                            fflush(stdout);
-                            
-                            cpu->pc.lo += 2;
-                            return;
-                        }
+                // c.sdsp
+                uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 7) & 0x7) << 6);
+                uint32_t addr = (uint32_t)get_reg64(cpu, 2) + uimm;
+                mem_write64(addr, cpu->x[rs2]);
+                cpu->pc.lo += 2;
+                return;
+            }
             break;
         }
     }
 
-    // 詳細なデバッグ情報を吐き出して停止する
     uint32_t f3 = (inst >> 13) & 0x7;
     printf("[UNKNOWN RVC] inst=0x%04X at PC=0x%08X (quadrant=%u, funct3=%u)\n", inst, cpu->pc.lo, quadrant, f3);
     cpu->halted = true;
