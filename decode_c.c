@@ -43,9 +43,13 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
             uint32_t funct3 = (inst >> 13) & 0x7;
             if (funct3 == 0x0) {
                 // c.addi4spn
-                uint32_t nzuimm = ((inst >> 10) & 0x7) | ((inst >> 7) & 0x38) | ((inst & 0x40) >> 3) | ((inst & 0x20) >> 1);
+                uint32_t nzuimm = (((inst >> 11) & 0x3) << 4) |
+                                  (((inst >> 7)  & 0xF) << 6) |
+                                  (((inst >> 6)  & 0x1) << 2) |
+                                  (((inst >> 5)  & 0x1) << 3);
                 uint32_t rd = c_reg((inst >> 2) & 0x7);
                 if (nzuimm == 0) {
+                    printf("[ERROR c.addi4spn] Illegal nzuimm=0 at PC=0x%08X\n", cpu->pc.lo);
                     cpu->halted = true;
                     return;
                 }
@@ -54,7 +58,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x2) {
-                // c.lw (修正箇所)
+                // c.lw
                 uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 6) & 0x1) << 2) | (((inst >> 5) & 0x1) << 6);
                 uint32_t rs1 = c_reg((inst >> 7) & 0x7);
                 uint32_t rd = c_reg((inst >> 2) & 0x7);
@@ -64,7 +68,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x3) {
-                // c.ld (修正箇所)
+                // c.ld
                 uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 5) & 0x3) << 6);
                 uint32_t rs1 = c_reg((inst >> 7) & 0x7);
                 uint32_t rd = c_reg((inst >> 2) & 0x7);
@@ -74,7 +78,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x6) {
-                // c.sw (修正箇所)
+                // c.sw
                 uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 6) & 0x1) << 2) | (((inst >> 5) & 0x1) << 6);
                 uint32_t rs1 = c_reg((inst >> 7) & 0x7);
                 uint32_t rs2 = c_reg((inst >> 2) & 0x7);
@@ -83,7 +87,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x7) {
-                // c.sd (修正箇所)
+                // c.sd
                 uint32_t uimm = (((inst >> 10) & 0x7) << 3) | (((inst >> 5) & 0x3) << 6);
                 uint32_t rs1 = c_reg((inst >> 7) & 0x7);
                 uint32_t rs2 = c_reg((inst >> 2) & 0x7);
@@ -124,7 +128,11 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
             } else if (funct3 == 0x3) {
                 if (rd_rs1 == 2) {
                     // c.addi16sp
-                    int32_t nzimm = (((inst >> 12) & 0x1) << 9) | (((inst >> 4) & 0xf) << 5) | (((inst >> 3) & 0x1) << 4) | (((inst >> 2) & 0x1) << 6) | (((inst >> 6) & 0x1) << 8);
+                    int32_t nzimm = (((inst >> 12) & 0x1) << 9) |
+                                    (((inst >> 4)  & 0x3) << 7) |
+                                    (((inst >> 2)  & 0x1) << 5) |
+                                    (((inst >> 5)  & 0x1) << 6) |
+                                    (((inst >> 6)  & 0x1) << 4);
                     if ((inst >> 12) & 0x1) nzimm |= 0xfffffc00;
                     set_reg64(cpu, 2, get_reg64(cpu, 2) + nzimm);
                 } else if (rd_rs1 != 0) {
@@ -213,7 +221,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 cpu->pc.lo += 2;
                 return;
             } else if (funct3 == 0x3) {
-                // c.ldsp (修正箇所)
+                // c.ldsp
                 uint32_t uimm = (((inst >> 12) & 0x1) << 5) | 
                                 (((inst >> 5) & 0x3) << 3) | 
                                 (((inst >> 2) & 0x7) << 6);
@@ -243,7 +251,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                     }
                 } else {
                     if (rs2 == 0) {
-                        // c.jalr
+                        // c.jalr (修正: set_reg64 に変更)
                         uint32_t target = (uint32_t)get_reg64(cpu, rd_rs1);
                         set_reg64(cpu, 1, get_pc32(cpu) + 2);
                         set_pc32(cpu, target);
