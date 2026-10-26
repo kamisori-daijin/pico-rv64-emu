@@ -239,10 +239,17 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             break;
 
         case 0x17: // auipc
-            {
-                reg64_t offset;
-                reg64_from_imm32(&offset, get_u_imm(inst));
-                reg64_add(&cpu->x[rd], cpu->pc, offset);
+                {
+                    int32_t imm_u = get_u_imm(inst);
+                    reg64_t offset;
+                    reg64_from_imm32(&offset, imm_u);
+                    
+                    reg64_add(&cpu->x[rd], cpu->pc, offset);
+                    
+                    // ★ 修正: RAM空間 (0x80000000以上) のアドレス計算時に上位32bitの符号拡張を維持
+                    if ((cpu->x[rd].lo & 0x80000000) != 0) {
+                        cpu->x[rd].hi = 0xFFFFFFFF;
+                    }
             }
             break;
 
