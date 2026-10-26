@@ -156,7 +156,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x3B:
+        case 0x3B: // ★ 32-bit ワード演算 (SRLW 修正済み)
             {
                 uint32_t v1 = cpu->x[rs1].lo;
                 uint32_t v2 = cpu->x[rs2].lo;
@@ -164,6 +164,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 if (funct7 == 0x00) {
                     if (funct3 == 0x0) res32 = v1 + v2;
                     else if (funct3 == 0x1) res32 = v1 << (v2 & 0x1F);
+                    else if (funct3 == 0x5) res32 = v1 >> (v2 & 0x1F); // ★ SRLW を追加！
                 } else if (funct7 == 0x20) {
                     if (funct3 == 0x0) res32 = v1 - v2;
                     else if (funct3 == 0x5) res32 = (uint32_t)((int32_t)v1 >> (v2 & 0x1F));
@@ -391,15 +392,11 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x2F: // ★ Atomic 命令群 (AMO) の本格サポート
+        case 0x2F: // AMO 命令群 (32-bit AMO の 符号拡張対応)
             {
                 uint32_t funct5 = (funct7 >> 2) & 0x1F;
                 uint32_t paddr  = cpu->x[rs1].lo;
                 bool is_64      = (funct3 == 3);
-
-                printf("[AMO EXEC] f5=0x%02X paddr=0x%08X rs2_val=0x%08X rd=x%u (old_mem=0x%08X)\n", 
-                               funct5, paddr, cpu->x[rs2].lo, rd, mem_read32(paddr));
-                        
 
                 if (is_64) {
                     // --- 64-bit AMO ---
@@ -419,13 +416,13 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                         default: new_u64 = src_u64; break;
                     }
 
-                    if (funct5 != 0x02) { // lr.d 以外はメモリ更新
+                    if (funct5 != 0x02) {
                         reg64_t write_val = { .lo = (uint32_t)new_u64, .hi = (uint32_t)(new_u64 >> 32) };
                         mem_write64(paddr, write_val);
                     }
 
                     if (rd != 0) {
-                        if (funct5 == 0x03) { // sc.d 成功時は 0
+                        if (funct5 == 0x03) {
                             cpu->x[rd].lo = 0;
                             cpu->x[rd].hi = 0;
                         } else {
@@ -433,7 +430,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                         }
                     }
                 } else {
-                    // --- 32-bit AMO ---
+                    // --- 32-bit AMO (amoswap.w 等) ---
                     uint32_t old_val = mem_read32(paddr);
                     uint32_t src_val = cpu->x[rs2].lo;
                     uint32_t new_val = 0;
@@ -449,12 +446,12 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                         default: new_val = src_val; break;
                     }
 
-                    if (funct5 != 0x02) { // lr.w 以外はメモリ更新
+                    if (funct5 != 0x02) {
                         mem_write32(paddr, new_val);
                     }
 
                     if (rd != 0) {
-                        if (funct5 == 0x03) { // sc.w 成功時は 0
+                        if (funct5 == 0x03) {
                             cpu->x[rd].lo = 0;
                             cpu->x[rd].hi = 0;
                         } else {
