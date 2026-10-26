@@ -137,13 +137,13 @@ int main(void) {
     printf("Kernel binary loaded successfully. Size: %u bytes\n", (unsigned int)kernel_bin_len);
 
     // PCの初期値を設定 (xv6のエントリポイント: 0x80000000)
+    // PCの初期値を設定 (0x80000000 を RV64 仕様通り 0xFFFFFFFF80000000 に符号拡張)
     cpu.pc.lo = (uint32_t)RAM_BASE;
-    cpu.pc.hi = 0x00000000;
-    cpu.priv_mode = 3; 
+    cpu.pc.hi = 0xFFFFFFFF; // ★ 0x00000000 から 0xFFFFFFFF に変更
     
-    // ★スタックポインタ (sp = x2) の初期値をRAMの終端に設定！
-    cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE); // 0x80040000
-    cpu.x[2].hi = 0x00000000;
+    // スタックポインタ (sp = x2) の初期値 (0xFFFFFFFF80040000)
+    cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE);
+    cpu.x[2].hi = 0xFFFFFFFF; // ★ 0x00000000 から 0xFFFFFFFF に変更
 
     printf("Starting CPU execution loop with RVC support...\n");
 

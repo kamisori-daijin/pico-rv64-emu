@@ -397,6 +397,10 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 uint32_t paddr  = cpu->x[rs1].lo;
                 bool is_64      = (funct3 == 3);
 
+                printf("[AMO EXEC] f5=0x%02X paddr=0x%08X rs2_val=0x%08X rd=x%u (old_mem=0x%08X)\n", 
+                               funct5, paddr, cpu->x[rs2].lo, rd, mem_read32(paddr));
+                        
+
                 if (is_64) {
                     // --- 64-bit AMO ---
                     reg64_t old_val = mem_read64(paddr);
