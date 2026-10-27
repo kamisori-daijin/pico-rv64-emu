@@ -29,6 +29,15 @@ static inline uint8_t* paddr_to_host(uint32_t paddr) {
     return &guest_ram[paddr - RAM_BASE];
 }
 
+// 仮想アドレスの下位32bitから上位32bit (va_hi) を判定するヘルパー
+static inline uint32_t get_va_hi(uint32_t vaddr) {
+    // TRAMPOLINE や KSTACK などの最上位仮想記憶領域 (0xFFFFxxxx) は 0x0000003F にマッピングされる
+    if ((vaddr & 0xF0000000U) == 0xF0000000U) {
+        return 0x0000003F;
+    }
+    return 0x00000000;
+}
+
 // ============================================================================
 // 1. 物理アドレス直引きメモリアクセス関数群 (_phys)
 // ============================================================================
@@ -128,7 +137,7 @@ void mem_write64_phys(uint32_t paddr, reg64_t val) {
 
 uint8_t mem_read8(uint32_t vaddr) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = 0x00000000;
+    uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read8_phys(paddr);
     }
@@ -137,7 +146,7 @@ uint8_t mem_read8(uint32_t vaddr) {
 
 uint16_t mem_read16(uint32_t vaddr) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = 0x00000000;
+    uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read16_phys(paddr);
     }
@@ -146,7 +155,7 @@ uint16_t mem_read16(uint32_t vaddr) {
 
 uint32_t mem_read32(uint32_t vaddr) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = 0x00000000;
+    uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read32_phys(paddr);
     }
@@ -164,7 +173,7 @@ reg64_t mem_read64(uint32_t vaddr) {
 
 void mem_write8(uint32_t vaddr, uint8_t val) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = 0x00000000;
+    uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
         mem_write8_phys(paddr, val);
     }
@@ -172,7 +181,7 @@ void mem_write8(uint32_t vaddr, uint8_t val) {
 
 void mem_write16(uint32_t vaddr, uint16_t val) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = 0x00000000;
+    uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
         mem_write16_phys(paddr, val);
     }
@@ -180,7 +189,7 @@ void mem_write16(uint32_t vaddr, uint16_t val) {
 
 void mem_write32(uint32_t vaddr, uint32_t val) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = 0x00000000;
+    uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
         mem_write32_phys(paddr, val);
         return;
