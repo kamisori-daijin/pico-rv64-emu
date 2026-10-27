@@ -9,7 +9,7 @@
 #define VIRTIO0_BASE 0x10001000ULL
 #define VIRTIO0_SIZE 0x100
 
-#include "fs.img.inc"
+#include "fs_img.inc"
 #else
 static const unsigned char fs_img[] = {0};
 static const unsigned int fs_img_len = 0;
