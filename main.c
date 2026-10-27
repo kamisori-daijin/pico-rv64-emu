@@ -219,10 +219,10 @@ int main(void) {
     printf("Kernel binary loaded successfully. Size: %u bytes\n", (unsigned int)kernel_bin_len);
 
     cpu.pc.lo = (uint32_t)RAM_BASE;
-    cpu.pc.hi = 0xFFFFFFFF;
+    cpu.pc.hi = 0x00000000; // 0xFFFFFFFF から 0x00000000 に変更[cite: 16]
     
     cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE);
-    cpu.x[2].hi = 0xFFFFFFFF;
+    cpu.x[2].hi = 0x00000000;
 
     printf("Starting CPU execution loop with MMU support...\n");
     fflush(stdout);

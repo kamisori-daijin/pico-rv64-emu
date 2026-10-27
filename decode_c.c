@@ -32,12 +32,12 @@ static inline uint32_t get_pc32(RV64CPU *cpu) {
 
 static inline void set_pc32(RV64CPU *cpu, uint32_t val) {
     cpu->pc.lo = val;
-    cpu->pc.hi = ((int32_t)val < 0) ? 0xFFFFFFFF : 0x00000000;
+    cpu->pc.hi = 0x00000000; // 符号拡張を解除[cite: 14]
 }
 
 static inline void advance_pc2(RV64CPU *cpu) {
     cpu->pc.lo += 2;
-    cpu->pc.hi = ((int32_t)cpu->pc.lo < 0) ? 0xFFFFFFFF : 0x00000000;
+    cpu->pc.hi = 0x00000000; // 符号拡張を解除[cite: 14]
 }
 
 void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {

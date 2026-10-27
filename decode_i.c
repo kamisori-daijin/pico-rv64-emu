@@ -247,9 +247,9 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 
                 reg64_add(&cpu->x[rd], cpu->pc, offset);
                 
-                if ((cpu->x[rd].lo & 0x80000000) != 0) {
-                    cpu->x[rd].hi = 0xFFFFFFFF;
-                }
+                //if ((cpu->x[rd].lo & 0x80000000) != 0) {
+                    //cpu->x[rd].hi = 0xFFFFFFFF;
+                    //}
             }
             break;
 
