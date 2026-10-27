@@ -9,6 +9,7 @@
 #define VIRTIO0_BASE 0x10001000ULL
 #define VIRTIO0_SIZE 0x100
 
+// Flash ROM 上の fs.img をロード（無ければダミー）
 #include "fs_img.inc"
 #else
 static const unsigned char fs_img[] = {0};
@@ -88,7 +89,7 @@ static inline void handle_queue_notify(void) {
     reg64_t  status_paddr_reg = mem_read64_phys(d2_addr);
     uint32_t status_paddr = status_paddr_reg.lo;
 
-    // --- Read要求 (req_type == 0): fs.img からデータをゲストRAMへコピー ---
+    // Read要求 (req_type == 0): fs.img からデータをゲストRAMへコピー
     if (req_type == 0) {
         uint64_t img_offset = sector * 512;
         for (uint32_t i = 0; i < data_len; i++) {
@@ -103,12 +104,9 @@ static inline void handle_queue_notify(void) {
     // ステータス 0 (成功) を書き込み
     mem_write8_phys(status_paddr, 0);
 
-    // struct buf の b->disk (1) を検索して 0 にクリア (sleep 解除)
-    for (int offset = 4; offset <= 128; offset += 4) {
-        if (mem_read32_phys(data_paddr - offset) == 1) {
-            mem_write32_phys(data_paddr - offset, 0);
-        }
-    }
+    // struct buf の b->disk (offset 4) をピンポイントで 0 にクリア
+    // (b->data は offset 88 なので 88 - 4 = 84 バイト前)
+    mem_write32_phys(data_paddr - 84, 0);
 
     // VirtIO used ring の更新
     uint32_t used_elem_addr = used_pa + 4 + (used_idx % 8) * 8;
