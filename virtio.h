@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include "cpu.h"
+#include "plic.h"
 
 #define VIRTIO0_BASE 0x10001000ULL
 #define VIRTIO0_SIZE 0x100
@@ -17,7 +19,7 @@ static const unsigned char fs_img[] = {0};
 static const unsigned int fs_img_len = 0;
 #endif
 
-// ★ ディスク書き込み差分キャッシュ (SRAM 32KB 使用)
+// ディスク書き込み差分キャッシュ (SRAM 32KB 使用)
 #define CACHE_SECTORS 64
 typedef struct {
     uint64_t sector;
@@ -69,6 +71,7 @@ static uint32_t g_driver_desc_low = 0;
 static uint32_t g_device_desc_low = 0;
 static uint32_t g_virtio_interrupt_status = 0;
 
+extern RV64CPU *g_cpu;
 extern uint8_t  mem_read8_phys(uint32_t paddr);
 extern void     mem_write8_phys(uint32_t paddr, uint8_t val);
 extern uint16_t mem_read16_phys(uint32_t paddr);
@@ -147,7 +150,6 @@ static inline void handle_queue_notify(void) {
                 }
             }
 
-            // RAM上の差分があれば上書き
             cache_read_sector(cur_sector, sector_buf);
 
             for (int i = 0; i < 512; i++) {
@@ -180,6 +182,12 @@ static inline void handle_queue_notify(void) {
 
     mem_write16_phys(used_pa + 2, used_idx + 1);
     g_virtio_interrupt_status = 1;
+
+    // PLIC 経由で CPU へ VirtIO 完了割り込み (IRQ 1 / SEIP) を通知
+    g_plic_virtio_pending = 1;
+    if (g_cpu) {
+        g_cpu->mip.lo |= (1U << 9); // SEIP (Bit 9)
+    }
 }
 
 static inline void virtio_write32(uint32_t paddr, uint32_t val) {

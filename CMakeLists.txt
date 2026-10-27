@@ -19,6 +19,7 @@ add_executable(rv64_emu
     uart.c
     clint.c   
     mmu.c
+    plic.c
     ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
 )
 

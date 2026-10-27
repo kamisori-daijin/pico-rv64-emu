@@ -5,10 +5,12 @@
 #include "cpu.h"
 #include "uart.h"
 #include "clint.h"
+#include "plic.h"
 #include "virtio.h"
 #include "decode_c.h"
 #include "mmu.h"
 
+// xv6 PHYSTOP(384KB) に合わせて SRAM を最適化
 #define RAM_SIZE (384 * 1024)
 #define RAM_BASE 0x80000000ULL
 
@@ -56,6 +58,7 @@ uint32_t mem_read32_phys(uint32_t paddr) {
     if (uart_is_addr(paddr))   return (uint32_t)uart_read8(paddr);
     if (clint_is_addr(paddr))  return clint_read32(paddr);
     if (virtio_is_addr(paddr)) return virtio_read32(paddr);
+    if (plic_is_addr(paddr))   return plic_read32(paddr);
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) return 0;
     uint32_t val;
@@ -86,6 +89,7 @@ void mem_write32_phys(uint32_t paddr, uint32_t val) {
     if (uart_is_addr(paddr)) { uart_write8(paddr, (uint8_t)(val & 0xFF)); return; }
     if (clint_is_addr(paddr)) { clint_write32(paddr, val); return; }
     if (virtio_is_addr(paddr)) { virtio_write32(paddr, val); return; }
+    if (plic_is_addr(paddr)) { plic_write32(paddr, val, g_cpu); return; }
 
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (host_ptr) __builtin_memcpy(host_ptr, &val, sizeof(val));
@@ -168,6 +172,36 @@ void mem_write64(uint32_t vaddr, reg64_t val) {
     mem_write32(vaddr + 4U, val.hi);
 }
 
+// 割り込み判定関数
+void check_pending_interrupts(RV64CPU *cpu) {
+    uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
+    bool sie_enabled = (sstatus_val & (1ULL << 1)) != 0;
+
+    // Uモード時、または Sモードかつ SIE=1 の場合に割り込みを処理
+    if (cpu->priv_mode == 0 || (cpu->priv_mode == 1 && sie_enabled)) {
+        uint32_t pending = cpu->mip.lo & cpu->sie.lo;
+
+        // SEIP (Supervisor External Interrupt: bit 9)
+        if (pending & (1U << 9)) {
+            cpu->sepc = cpu->pc;
+            cpu->scause.lo = 0x80000009U; // Interrupt bit + Exception code 9
+            cpu->scause.hi = 0x80000000U;
+
+            uint64_t spie = (sstatus_val >> 1) & 1;
+            sstatus_val &= ~(1ULL << 8); // SPP
+            if (cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);
+            sstatus_val = (sstatus_val & ~(1ULL << 5)) | (spie << 5); // SPIE = SIE
+            sstatus_val &= ~(1ULL << 1); // SIE = 0
+            cpu->sstatus.lo = (uint32_t)sstatus_val;
+            cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
+
+            cpu->priv_mode = 1;
+            cpu->pc.lo = cpu->stvec.lo & ~0x3U;
+            cpu->pc.hi = cpu->stvec.hi;
+        }
+    }
+}
+
 // ============================================================================
 // メイン関数 & エミュレーションループ
 // ============================================================================
@@ -212,6 +246,9 @@ int main(void) {
     unsigned long long inst_count = 0;
 
     while (!cpu.halted) {
+        // ★ 割り込みトラップの判定
+        check_pending_interrupts(&cpu);
+
         // 1000命令ごとにタイマー割り込みフラグをチェック更新
         if ((inst_count & 0x3FF) == 0) {
             clint_update_timer_interrupt(&cpu);
