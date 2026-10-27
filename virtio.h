@@ -3,9 +3,17 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
 
 #define VIRTIO0_BASE 0x10001000ULL
 #define VIRTIO0_SIZE 0x100
+
+#include "fs.img.inc"
+#else
+static const unsigned char fs_img[] = {0};
+static const unsigned int fs_img_len = 0;
+#endif
 
 static uint32_t g_virtio_status = 0;
 static uint32_t g_virtio_queue_ready = 0;
@@ -37,7 +45,7 @@ static inline uint32_t virtio_read32(uint32_t paddr) {
         case 0x008: return 2;                   // DEVICE_ID (Disk)
         case 0x00c: return 0x554d4551;          // VENDOR_ID ("QEMU")
         case 0x010: return 0;                   // DEVICE_FEATURES
-        case 0x034: return 8;                   // QUEUE_NUM_MAX (NUM = 8)
+        case 0x034: return 8;                   // QUEUE_NUM_MAX
         case 0x044: return g_virtio_queue_ready;
         case 0x060: return g_virtio_interrupt_status;
         case 0x070: return g_virtio_status;
@@ -45,7 +53,6 @@ static inline uint32_t virtio_read32(uint32_t paddr) {
     }
 }
 
-// QUEUE_NOTIFY (0x050) 書き込み時に同期処理で sleep を解除
 static inline void handle_queue_notify(void) {
     uint32_t avail_pa = g_driver_desc_low;
     uint32_t used_pa  = g_device_desc_low;
@@ -59,12 +66,14 @@ static inline void handle_queue_notify(void) {
     uint32_t ring_elem_addr = avail_pa + 4 + ((avail_idx - 1) % 8) * 2;
     uint16_t head_desc_idx  = mem_read16_phys(ring_elem_addr);
 
-    // ディスクリプタ 0: virtio_blk_req (type, reserved, sector)
+    // ディスクリプタ 0: virtio_blk_req
     uint32_t d0_addr = desc_pa + head_desc_idx * 16;
     reg64_t  req_header_paddr_reg = mem_read64_phys(d0_addr);
     uint32_t req_header_paddr = req_header_paddr_reg.lo;
 
-    uint32_t req_type = mem_read32_phys(req_header_paddr);
+    uint32_t req_type   = mem_read32_phys(req_header_paddr);
+    reg64_t  sector_reg = mem_read64_phys(req_header_paddr + 8);
+    uint64_t sector     = ((uint64_t)sector_reg.hi << 32) | sector_reg.lo;
 
     // ディスクリプタ 1: データバッファ (b->data)
     uint16_t d1_next = mem_read16_phys(d0_addr + 14);
@@ -79,19 +88,27 @@ static inline void handle_queue_notify(void) {
     reg64_t  status_paddr_reg = mem_read64_phys(d2_addr);
     uint32_t status_paddr = status_paddr_reg.lo;
 
-    // Read要求の場合、データバッファを 0 で埋める
+    // --- Read要求 (req_type == 0): fs.img からデータをゲストRAMへコピー ---
     if (req_type == 0) {
+        uint64_t img_offset = sector * 512;
         for (uint32_t i = 0; i < data_len; i++) {
-            mem_write8_phys(data_paddr + i, 0);
+            uint8_t byte_val = 0;
+            if ((img_offset + i) < fs_img_len) {
+                byte_val = fs_img[img_offset + i];
+            }
+            mem_write8_phys(data_paddr + i, byte_val);
         }
     }
 
     // ステータス 0 (成功) を書き込み
     mem_write8_phys(status_paddr, 0);
 
-    // struct buf の b->disk (data_paddr の 48 バイト前) を 0 にして sleep ループを突破
-    uint32_t buf_disk_paddr = data_paddr - 48;
-    mem_write32_phys(buf_disk_paddr, 0);
+    // struct buf の b->disk (1) を検索して 0 にクリア (sleep 解除)
+    for (int offset = 4; offset <= 128; offset += 4) {
+        if (mem_read32_phys(data_paddr - offset) == 1) {
+            mem_write32_phys(data_paddr - offset, 0);
+        }
+    }
 
     // VirtIO used ring の更新
     uint32_t used_elem_addr = used_pa + 4 + (used_idx % 8) * 8;
@@ -118,4 +135,3 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
     }
 }
 
-#endif
