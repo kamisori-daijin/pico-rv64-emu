@@ -142,6 +142,8 @@ uint32_t mem_read32(uint32_t vaddr) {
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read32_phys(paddr);
     }
+    // 変換失敗時に画面に出力する
+    printf("[MMU FAULT READ] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
     return 0;
 }
 
@@ -173,7 +175,10 @@ void mem_write32(uint32_t vaddr, uint32_t val) {
     uint32_t va_hi = ((int32_t)vaddr < 0) ? 0xFFFFFFFF : 0x00000000;
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
         mem_write32_phys(paddr, val);
+        return;
     }
+    // 変換失敗時に画面に出力する
+    printf("[MMU FAULT WRITE] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
 }
 
 void mem_write64(uint32_t vaddr, reg64_t val) {
@@ -218,7 +223,7 @@ int main(void) {
     cpu.pc.hi = 0xFFFFFFFF; // 0x80000000 を RV64 仕様通り 0xFFFFFFFF80000000 に符号拡張
     
     // スタックポインタ (sp = x2) の初期値
-    cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE);
+    cpu.x[2].lo = (uint32_t)(RAM_BASE + kernel_bin_len + 0x2000);
     cpu.x[2].hi = 0xFFFFFFFF;
 
     printf("Starting CPU execution loop with MMU support...\n");
