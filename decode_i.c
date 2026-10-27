@@ -156,7 +156,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x3B: // ★ 32-bit ワード演算 (SRLW 修正済み)
+        case 0x3B:
             {
                 uint32_t v1 = cpu->x[rs1].lo;
                 uint32_t v2 = cpu->x[rs2].lo;
@@ -164,7 +164,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 if (funct7 == 0x00) {
                     if (funct3 == 0x0) res32 = v1 + v2;
                     else if (funct3 == 0x1) res32 = v1 << (v2 & 0x1F);
-                    else if (funct3 == 0x5) res32 = v1 >> (v2 & 0x1F); // ★ SRLW を追加！
+                    else if (funct3 == 0x5) res32 = v1 >> (v2 & 0x1F);
                 } else if (funct7 == 0x20) {
                     if (funct3 == 0x0) res32 = v1 - v2;
                     else if (funct3 == 0x5) res32 = (uint32_t)((int32_t)v1 >> (v2 & 0x1F));
@@ -209,27 +209,27 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
         case 0x03:
             {
-                uint32_t paddr = cpu->x[rs1].lo + imm_i;
+                uint32_t vaddr = cpu->x[rs1].lo + imm_i;
                 switch (funct3) {
-                    case 0x0: reg64_from_imm32(&cpu->x[rd], (int32_t)(int8_t)mem_read8(paddr)); break;
-                    case 0x1: reg64_from_imm32(&cpu->x[rd], (int32_t)(int16_t)mem_read16(paddr)); break;
-                    case 0x2: reg64_from_imm32(&cpu->x[rd], (int32_t)mem_read32(paddr)); break;
-                    case 0x3: cpu->x[rd] = mem_read64(paddr); break;
-                    case 0x4: reg64_from_u32(&cpu->x[rd], (uint32_t)mem_read8(paddr)); break;
-                    case 0x5: reg64_from_u32(&cpu->x[rd], (uint32_t)mem_read16(paddr)); break;
-                    case 0x6: reg64_from_u32(&cpu->x[rd], mem_read32(paddr)); break;
+                    case 0x0: reg64_from_imm32(&cpu->x[rd], (int32_t)(int8_t)mem_read8(vaddr)); break;
+                    case 0x1: reg64_from_imm32(&cpu->x[rd], (int32_t)(int16_t)mem_read16(vaddr)); break;
+                    case 0x2: reg64_from_imm32(&cpu->x[rd], (int32_t)mem_read32(vaddr)); break;
+                    case 0x3: cpu->x[rd] = mem_read64(vaddr); break;
+                    case 0x4: reg64_from_u32(&cpu->x[rd], (uint32_t)mem_read8(vaddr)); break;
+                    case 0x5: reg64_from_u32(&cpu->x[rd], (uint32_t)mem_read16(vaddr)); break;
+                    case 0x6: reg64_from_u32(&cpu->x[rd], mem_read32(vaddr)); break;
                 }
             }
             break;
 
         case 0x23:
             {
-                uint32_t paddr = cpu->x[rs1].lo + imm_s;
+                uint32_t vaddr = cpu->x[rs1].lo + imm_s;
                 switch (funct3) {
-                    case 0x0: mem_write8(paddr, (uint8_t)cpu->x[rs2].lo); break;
-                    case 0x1: mem_write16(paddr, (uint16_t)cpu->x[rs2].lo); break;
-                    case 0x2: mem_write32(paddr, cpu->x[rs2].lo); break;
-                    case 0x3: mem_write64(paddr, cpu->x[rs2]); break;
+                    case 0x0: mem_write8(vaddr, (uint8_t)cpu->x[rs2].lo); break;
+                    case 0x1: mem_write16(vaddr, (uint16_t)cpu->x[rs2].lo); break;
+                    case 0x2: mem_write32(vaddr, cpu->x[rs2].lo); break;
+                    case 0x3: mem_write64(vaddr, cpu->x[rs2]); break;
                 }
             }
             break;
@@ -239,17 +239,16 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             break;
 
         case 0x17: // auipc
-                {
-                    int32_t imm_u = get_u_imm(inst);
-                    reg64_t offset;
-                    reg64_from_imm32(&offset, imm_u);
-                    
-                    reg64_add(&cpu->x[rd], cpu->pc, offset);
-                    
-                    // ★ 修正: RAM空間 (0x80000000以上) のアドレス計算時に上位32bitの符号拡張を維持
-                    if ((cpu->x[rd].lo & 0x80000000) != 0) {
-                        cpu->x[rd].hi = 0xFFFFFFFF;
-                    }
+            {
+                int32_t imm_u = get_u_imm(inst);
+                reg64_t offset;
+                reg64_from_imm32(&offset, imm_u);
+                
+                reg64_add(&cpu->x[rd], cpu->pc, offset);
+                
+                if ((cpu->x[rd].lo & 0x80000000) != 0) {
+                    cpu->x[rd].hi = 0xFFFFFFFF;
+                }
             }
             break;
 
@@ -315,112 +314,110 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-            case 0x73:
-                        {
-                            uint32_t csr_addr = inst >> 20;
-                            
-                            if (funct3 == 0x0) {
-                                if (inst == 0x30200073) {        // mret
-                                    cpu->pc = cpu->mepc;
-                                    if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
-                                    return;
-                                } else if (inst == 0x10200073) { // sret
-                                    cpu->pc = cpu->sepc;
-                                    if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
-                                    return;
-                                } else if (inst == 0x10500073) { // wfi (Wait For Interrupt)
-                                    // wfi は割り込み待ち命令。単体エミュレーションでは NOP (PC+4) として処理する
-                                    reg64_t four = { .lo = 4, .hi = 0 };
-                                    reg64_add(&cpu->pc, cpu->pc, four);
-                                    return;
-                                }
-                            }
-            
-                            reg64_t *target_csr = NULL;
-                            bool read_only = false;
-            
-                            switch (csr_addr) {
-                                case 0xF14: 
-                                case 0xC00: 
-                                case 0xC01: 
-                                    read_only = true;
-                                    break;
-                                case 0x100: target_csr = &cpu->sstatus; break;
-                                case 0x104: target_csr = &cpu->sie; break;
-                                case 0x105: target_csr = &cpu->stvec; break;    // ★ 追加 (stvec)
-                                case 0x140: target_csr = &cpu->sscratch; break; // ★ 追加 (sscratch)
-                                case 0x141: target_csr = &cpu->sepc; break;     // ★ 追加 (sepc - 必須)
-                                case 0x142: target_csr = &cpu->scause; break;   // ★ 追加 (scause)
-                                case 0x143: target_csr = &cpu->stval; break;    // ★ 追加 (stval)
-                                case 0x180: target_csr = &cpu->satp; break;
-                                case 0x300: target_csr = &cpu->mstatus; break;
-                                case 0x302: target_csr = &cpu->medeleg; break;
-                                case 0x303: target_csr = &cpu->mideleg; break;
-                                case 0x306: target_csr = &cpu->mcounteren; break;
-                                case 0x30A: target_csr = &cpu->menvcfg; break;
-                                case 0x341: target_csr = &cpu->mepc; break;
-                                case 0x14D: target_csr = &cpu->stimecmp; break;
-                                default:
-                                    break;
-                            }
-            
-                            reg64_t old_val = { .lo = 0, .hi = 0 };
-                            if (csr_addr == 0xF14 || csr_addr == 0xC00 || csr_addr == 0xC01) {
-                                old_val.lo = 0;
-                                old_val.hi = 0;
-                            } else if (target_csr != NULL) {
-                                old_val = *target_csr;
-                            }
-            
-                            uint32_t wr_type = funct3 & 0x3;
-                            if (wr_type != 0 && !read_only) {
-                                uint64_t rs1_val = 0;
-                                if ((funct3 & 0x4) != 0) {
-                                    rs1_val = rs1;
-                                } else {
-                                    rs1_val = ((uint64_t)cpu->x[rs1].hi << 32) | cpu->x[rs1].lo;
-                                }
-            
-                                uint64_t old_u64 = ((uint64_t)old_val.hi << 32) | old_val.lo;
-                                uint64_t new_u64 = old_u64;
-            
-                                if (wr_type == 1) {
-                                    new_u64 = rs1_val;
-                                } else if (wr_type == 2) {
-                                    new_u64 = old_u64 | rs1_val;
-                                } else if (wr_type == 3) {
-                                    new_u64 = old_u64 & ~rs1_val;
-                                }
-            
-                                reg64_t new_val = { .lo = (uint32_t)new_u64, .hi = (uint32_t)(new_u64 >> 32) };
-            
-                                if (target_csr != NULL) {
-                                    *target_csr = new_val;
-                                    // RAM空間(0x80000000以上)のアドレスが書き込まれた場合、上位32bitを符号拡張
-                                    if ((target_csr == &cpu->sepc || target_csr == &cpu->mepc) && (new_val.lo & 0x80000000)) {
-                                        target_csr->hi = 0xFFFFFFFF;
-                                    }
-                                }
-                                if (csr_addr == 0x180) {
-                                    cpu->satp = new_val;
-                                }
-                            }
-            
-                            if (rd != 0) {
-                                cpu->x[rd] = old_val;
-                            }
-                        }
-                        break;
+        case 0x73:
+            {
+                uint32_t csr_addr = inst >> 20;
+                
+                if (funct3 == 0x0) {
+                    if (inst == 0x30200073) {        // mret
+                        cpu->pc = cpu->mepc;
+                        if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
+                        return;
+                    } else if (inst == 0x10200073) { // sret
+                        cpu->pc = cpu->sepc;
+                        if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
+                        return;
+                    } else if (inst == 0x10500073) { // wfi
+                        reg64_t four = { .lo = 4, .hi = 0 };
+                        reg64_add(&cpu->pc, cpu->pc, four);
+                        return;
+                    }
+                }
 
-        case 0x2F: // AMO 命令群 (32-bit AMO の 符号拡張対応)
+                reg64_t *target_csr = NULL;
+                bool read_only = false;
+
+                switch (csr_addr) {
+                    case 0xF14: 
+                    case 0xC00: 
+                    case 0xC01: 
+                        read_only = true;
+                        break;
+                    case 0x100: target_csr = &cpu->sstatus; break;
+                    case 0x104: target_csr = &cpu->sie; break;
+                    case 0x105: target_csr = &cpu->stvec; break;
+                    case 0x140: target_csr = &cpu->sscratch; break;
+                    case 0x141: target_csr = &cpu->sepc; break;
+                    case 0x142: target_csr = &cpu->scause; break;
+                    case 0x143: target_csr = &cpu->stval; break;
+                    case 0x180: target_csr = &cpu->satp; break;
+                    case 0x300: target_csr = &cpu->mstatus; break;
+                    case 0x302: target_csr = &cpu->medeleg; break;
+                    case 0x303: target_csr = &cpu->mideleg; break;
+                    case 0x306: target_csr = &cpu->mcounteren; break;
+                    case 0x30A: target_csr = &cpu->menvcfg; break;
+                    case 0x341: target_csr = &cpu->mepc; break;
+                    case 0x14D: target_csr = &cpu->stimecmp; break;
+                    default:
+                        break;
+                }
+
+                reg64_t old_val = { .lo = 0, .hi = 0 };
+                if (csr_addr == 0xF14 || csr_addr == 0xC00 || csr_addr == 0xC01) {
+                    old_val.lo = 0;
+                    old_val.hi = 0;
+                } else if (target_csr != NULL) {
+                    old_val = *target_csr;
+                }
+
+                uint32_t wr_type = funct3 & 0x3;
+                if (wr_type != 0 && !read_only) {
+                    uint64_t rs1_val = 0;
+                    if ((funct3 & 0x4) != 0) {
+                        rs1_val = rs1;
+                    } else {
+                        rs1_val = ((uint64_t)cpu->x[rs1].hi << 32) | cpu->x[rs1].lo;
+                    }
+
+                    uint64_t old_u64 = ((uint64_t)old_val.hi << 32) | old_val.lo;
+                    uint64_t new_u64 = old_u64;
+
+                    if (wr_type == 1) {
+                        new_u64 = rs1_val;
+                    } else if (wr_type == 2) {
+                        new_u64 = old_u64 | rs1_val;
+                    } else if (wr_type == 3) {
+                        new_u64 = old_u64 & ~rs1_val;
+                    }
+
+                    reg64_t new_val = { .lo = (uint32_t)new_u64, .hi = (uint32_t)(new_u64 >> 32) };
+
+                    if (target_csr != NULL) {
+                        *target_csr = new_val;
+                        if ((target_csr == &cpu->sepc || target_csr == &cpu->mepc) && (new_val.lo & 0x80000000)) {
+                            target_csr->hi = 0xFFFFFFFF;
+                        }
+                    }
+                    if (csr_addr == 0x180) {
+                        cpu->satp = new_val;
+                    }
+                }
+
+                if (rd != 0) {
+                    cpu->x[rd] = old_val;
+                }
+            }
+            break;
+
+        case 0x2F: // AMO 命令群 (★ MMU 経由のアクセスに全面修正)
             {
                 uint32_t funct5 = (funct7 >> 2) & 0x1F;
-                uint32_t paddr  = cpu->x[rs1].lo;
+                uint32_t vaddr  = cpu->x[rs1].lo; // 仮想アドレスとして取得
                 bool is_64      = (funct3 == 3);
 
                 if (is_64) {
                     // --- 64-bit AMO ---
-                    reg64_t old_val = mem_read64(paddr);
+                    reg64_t old_val = mem_read64(vaddr);
                     uint64_t old_u64 = ((uint64_t)old_val.hi << 32) | old_val.lo;
                     uint64_t src_u64 = ((uint64_t)cpu->x[rs2].hi << 32) | cpu->x[rs2].lo;
                     uint64_t new_u64 = 0;
@@ -438,12 +435,12 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
                     if (funct5 != 0x02) {
                         reg64_t write_val = { .lo = (uint32_t)new_u64, .hi = (uint32_t)(new_u64 >> 32) };
-                        mem_write64(paddr, write_val);
+                        mem_write64(vaddr, write_val);
                     }
 
                     if (rd != 0) {
                         if (funct5 == 0x03) {
-                            cpu->x[rd].lo = 0;
+                            cpu->x[rd].lo = 0; // sc.d 成功
                             cpu->x[rd].hi = 0;
                         } else {
                             cpu->x[rd] = old_val;
@@ -451,7 +448,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                     }
                 } else {
                     // --- 32-bit AMO (amoswap.w 等) ---
-                    uint32_t old_val = mem_read32(paddr);
+                    uint32_t old_val = mem_read32(vaddr);
                     uint32_t src_val = cpu->x[rs2].lo;
                     uint32_t new_val = 0;
 
@@ -467,12 +464,12 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                     }
 
                     if (funct5 != 0x02) {
-                        mem_write32(paddr, new_val);
+                        mem_write32(vaddr, new_val);
                     }
 
                     if (rd != 0) {
                         if (funct5 == 0x03) {
-                            cpu->x[rd].lo = 0;
+                            cpu->x[rd].lo = 0; // sc.w 成功
                             cpu->x[rd].hi = 0;
                         } else {
                             reg64_sext32(&cpu->x[rd], old_val);

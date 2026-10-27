@@ -29,7 +29,6 @@ static inline uint8_t* paddr_to_host(uint32_t paddr) {
 
 // ============================================================================
 // 1. 物理アドレス直引きメモリアクセス関数群 (_phys)
-//    ※ MMUの Page Table Walk や Device MMIO で使用
 // ============================================================================
 
 uint8_t mem_read8_phys(uint32_t paddr) {
@@ -102,6 +101,7 @@ void mem_write32_phys(uint32_t paddr, uint32_t val) {
         clint_write32(paddr, val);
         return;
     }
+
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (host_ptr) {
         __builtin_memcpy(host_ptr, &val, sizeof(val));
@@ -115,7 +115,6 @@ void mem_write64_phys(uint32_t paddr, reg64_t val) {
 
 // ============================================================================
 // 2. MMU (仮想アドレス Sv39) 経由の公開メモリアクセス関数群
-//    ※ CPUの実行・ロード・ストア処理から呼び出される
 // ============================================================================
 
 uint8_t mem_read8(uint32_t vaddr) {
@@ -142,8 +141,7 @@ uint32_t mem_read32(uint32_t vaddr) {
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read32_phys(paddr);
     }
-    // 変換失敗時に画面に出力する
-    printf("[MMU FAULT READ] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
+    printf("[READ FAULT] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
     return 0;
 }
 
@@ -177,8 +175,7 @@ void mem_write32(uint32_t vaddr, uint32_t val) {
         mem_write32_phys(paddr, val);
         return;
     }
-    // 変換失敗時に画面に出力する
-    printf("[MMU FAULT WRITE] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
+    printf("[WRITE FAULT] VA=0x%08X, Val=0x%08X at PC=0x%08X\n", vaddr, val, g_cpu->pc.lo);
 }
 
 void mem_write64(uint32_t vaddr, reg64_t val) {
@@ -207,22 +204,22 @@ int main(void) {
     memset(&cpu, 0, sizeof(RV64CPU));
     memset(guest_ram, 0, RAM_SIZE);
 
-    g_cpu = &cpu; // グローバルポインタに設定
+    // ★ 初期特権モードを Machine モード (3) に設定
+    cpu.priv_mode = 3;
+
+    g_cpu = &cpu;
 
     if (kernel_bin_len > RAM_SIZE) {
         printf("Error: Kernel binary is too large for guest RAM! (%u bytes)\n", (unsigned int)kernel_bin_len);
         return -1;
     }
 
-    // フラッシュROM上の .rodata からゲストRAMのベースへコピー
     memcpy(&guest_ram[0], kernel_bin, kernel_bin_len);
     printf("Kernel binary loaded successfully. Size: %u bytes\n", (unsigned int)kernel_bin_len);
 
-    // PCの初期値を設定 (xv6のエントリポイント: 0x80000000)
     cpu.pc.lo = (uint32_t)RAM_BASE;
-    cpu.pc.hi = 0xFFFFFFFF; // 0x80000000 を RV64 仕様通り 0xFFFFFFFF80000000 に符号拡張
+    cpu.pc.hi = 0xFFFFFFFF;
     
-    // スタックポインタ (sp = x2) の初期値
     cpu.x[2].lo = (uint32_t)(RAM_BASE + kernel_bin_len + 0x2000);
     cpu.x[2].hi = 0xFFFFFFFF;
 
@@ -230,16 +227,12 @@ int main(void) {
 
     unsigned long long inst_count = 0;
 
-    // フェッチ・実行メインループ
     while (!cpu.halted) {
         uint32_t vaddr = cpu.pc.lo;
         
-        // MMU経由で下位ハーフワードをフェッチ
         uint16_t half = mem_read16(vaddr);
 
-        // 最下位2ビットで命令長を判定 (11なら32bit、それ以外は16bit RVC)
         if ((half & 0x3) == 0x3) {
-            // --- 32ビット標準命令 ---
             if (vaddr % 2 != 0) {
                 printf("[ERROR] Misaligned instruction fetch! PC = 0x%08X\n", vaddr);
                 cpu.halted = true;
@@ -247,17 +240,13 @@ int main(void) {
             }
 
             uint32_t inst = mem_read32(vaddr);
-
             execute_instruction(&cpu, inst);
-
         } else {
-            // --- 16ビット圧縮命令 (RVC) ---
             execute_compressed_instruction(&cpu, half);
         }
         
         inst_count++;
 
-        // 一定命令数ごとの進捗表示
         if (inst_count % 5000000 == 0) {
             printf("[Stats] Executed %llu insts. PC: 0x%08X_%08X\n", inst_count, cpu.pc.hi, cpu.pc.lo);
         }
