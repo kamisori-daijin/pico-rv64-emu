@@ -1,7 +1,7 @@
 #include "clint.h"
 #include "pico/stdlib.h"
 
-static uint64_t mtimecmp = 0;
+static uint64_t mtimecmp = 0xFFFFFFFFFFFFFFFFULL;
 
 bool clint_is_addr(uint32_t paddr) {
     return (paddr >= CLINT_BASE && paddr < (CLINT_BASE + CLINT_SIZE));
@@ -32,5 +32,14 @@ void clint_write32(uint32_t paddr, uint32_t val) {
         mtimecmp = (mtimecmp & 0xFFFFFFFF00000000ULL) | val;
     } else if (offset == 0x4004) {
         mtimecmp = (mtimecmp & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32);
+    }
+}
+
+void clint_update_timer_interrupt(RV64CPU *cpu) {
+    uint64_t mtime = time_us_64();
+    if (mtimecmp != 0 && mtime >= mtimecmp) {
+        cpu->mip.lo |= (1U << 7); // MTIP (Bit 7: Machine Timer Interrupt)
+    } else {
+        cpu->mip.lo &= ~(1U << 7);
     }
 }

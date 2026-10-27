@@ -9,19 +9,15 @@
 #include "decode_c.h"
 #include "mmu.h"
 
-// ゲスト物理メモリのサイズ (xv6用384KB + C言語スタック専用64KB = 448KB)
 #define RAM_SIZE ((384 + 64) * 1024)
 #define RAM_BASE 0x80000000ULL
 
 static uint8_t guest_ram[RAM_SIZE];
 
-// フラッシュROMの .rodata に常駐するカーネル配列
 #include "kernel.bin.inc"
 
-// MMUからCPUのCSR状態等を参照するためのグローバルポインタ
 RV64CPU *g_cpu = NULL;
 
-// --- 物理アドレスからホストのゲストRAMポインタへの変換 ---
 static inline uint8_t* paddr_to_host(uint32_t paddr) {
     if (paddr < RAM_BASE || paddr >= (RAM_BASE + RAM_SIZE)) {
         return NULL;
@@ -29,9 +25,7 @@ static inline uint8_t* paddr_to_host(uint32_t paddr) {
     return &guest_ram[paddr - RAM_BASE];
 }
 
-// 仮想アドレスの下位32bitから上位32bit (va_hi) を判定するヘルパー
 static inline uint32_t get_va_hi(uint32_t vaddr) {
-    // TRAMPOLINE や KSTACK などの最上位仮想記憶領域 (0xFFFFxxxx) は 0x0000003F にマッピングされる
     if ((vaddr & 0xF0000000U) == 0xF0000000U) {
         return 0x0000003F;
     }
@@ -43,18 +37,14 @@ static inline uint32_t get_va_hi(uint32_t vaddr) {
 // ============================================================================
 
 uint8_t mem_read8_phys(uint32_t paddr) {
-    if (uart_is_addr(paddr)) {
-        return uart_read8(paddr);
-    }
+    if (uart_is_addr(paddr))   return uart_read8(paddr);
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) return 0;
     return *host_ptr;
 }
 
 uint16_t mem_read16_phys(uint32_t paddr) {
-    if (uart_is_addr(paddr)) {
-        return (uint16_t)uart_read8(paddr);
-    }
+    if (uart_is_addr(paddr))   return (uint16_t)uart_read8(paddr);
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) return 0;
     uint16_t val;
@@ -63,15 +53,9 @@ uint16_t mem_read16_phys(uint32_t paddr) {
 }
 
 uint32_t mem_read32_phys(uint32_t paddr) {
-    if (uart_is_addr(paddr)) {
-        return (uint32_t)uart_read8(paddr);
-    }
-    if (clint_is_addr(paddr)) {
-        return clint_read32(paddr);
-    }
-    if (virtio_is_addr(paddr)) {
-        return virtio_read32(paddr);
-    }
+    if (uart_is_addr(paddr))   return (uint32_t)uart_read8(paddr);
+    if (clint_is_addr(paddr))  return clint_read32(paddr);
+    if (virtio_is_addr(paddr)) return virtio_read32(paddr);
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) return 0;
     uint32_t val;
@@ -87,43 +71,24 @@ reg64_t mem_read64_phys(uint32_t paddr) {
 }
 
 void mem_write8_phys(uint32_t paddr, uint8_t val) {
-    if (uart_is_addr(paddr)) {
-        uart_write8(paddr, val);
-        return;
-    }
+    if (uart_is_addr(paddr)) { uart_write8(paddr, val); return; }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (host_ptr) *host_ptr = val;
 }
 
 void mem_write16_phys(uint32_t paddr, uint16_t val) {
-    if (uart_is_addr(paddr)) {
-        uart_write8(paddr, (uint8_t)(val & 0xFF));
-        return;
-    }
+    if (uart_is_addr(paddr)) { uart_write8(paddr, (uint8_t)(val & 0xFF)); return; }
     uint8_t *host_ptr = paddr_to_host(paddr);
-    if (host_ptr) {
-        __builtin_memcpy(host_ptr, &val, sizeof(val));
-    }
+    if (host_ptr) __builtin_memcpy(host_ptr, &val, sizeof(val));
 }
 
 void mem_write32_phys(uint32_t paddr, uint32_t val) {
-    if (uart_is_addr(paddr)) {
-        uart_write8(paddr, (uint8_t)(val & 0xFF));
-        return;
-    }
-    if (clint_is_addr(paddr)) {
-        clint_write32(paddr, val);
-        return;
-    }
-    if (virtio_is_addr(paddr)) {
-        virtio_write32(paddr, val);
-        return;
-    }
+    if (uart_is_addr(paddr)) { uart_write8(paddr, (uint8_t)(val & 0xFF)); return; }
+    if (clint_is_addr(paddr)) { clint_write32(paddr, val); return; }
+    if (virtio_is_addr(paddr)) { virtio_write32(paddr, val); return; }
 
     uint8_t *host_ptr = paddr_to_host(paddr);
-    if (host_ptr) {
-        __builtin_memcpy(host_ptr, &val, sizeof(val));
-    }
+    if (host_ptr) __builtin_memcpy(host_ptr, &val, sizeof(val));
 }
 
 void mem_write64_phys(uint32_t paddr, reg64_t val) {
@@ -247,6 +212,11 @@ int main(void) {
     unsigned long long inst_count = 0;
 
     while (!cpu.halted) {
+        // 1000命令ごとにタイマー割り込みフラグをチェック更新
+        if ((inst_count & 0x3FF) == 0) {
+            clint_update_timer_interrupt(&cpu);
+        }
+
         uint32_t vaddr = cpu.pc.lo;
         uint16_t half = mem_read16(vaddr);
 
@@ -263,9 +233,10 @@ int main(void) {
         }
         
         inst_count++;
+
         if (inst_count % 1000000 == 0) {
             printf("[HEARTBEAT] Executed %lluM insts | PC=0x%08X | Mode=%d (0:U,1:S,3:M)\n",
-                    inst_count / 1000000, cpu.pc.lo, cpu.priv_mode);
+                   inst_count / 1000000, cpu.pc.lo, cpu.priv_mode);
             fflush(stdout);
         }
     }

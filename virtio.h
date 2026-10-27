@@ -10,6 +10,7 @@
 #define VIRTIO0_SIZE 0x100
 
 // Flash ROM 上の fs.img をロード（無ければダミー）
+#if __has_include("fs_img.inc")
 #include "fs_img.inc"
 #else
 static const unsigned char fs_img[] = {0};
@@ -105,7 +106,6 @@ static inline void handle_queue_notify(void) {
     mem_write8_phys(status_paddr, 0);
 
     // struct buf の b->disk (offset 4) をピンポイントで 0 にクリア
-    // (b->data は offset 88 なので 88 - 4 = 84 バイト前)
     mem_write32_phys(data_paddr - 84, 0);
 
     // VirtIO used ring の更新
@@ -133,3 +133,4 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
     }
 }
 
+#endif

@@ -27,6 +27,7 @@ typedef struct {
     reg64_t medeleg;
     reg64_t mideleg;
     reg64_t sie;
+    reg64_t mip;
     reg64_t mcounteren;
     reg64_t menvcfg;
     reg64_t stimecmp;
