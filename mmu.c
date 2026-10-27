@@ -21,7 +21,6 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
         return true;
     }
 
-    // 64-bit 仮想アドレスの構築（無理な符号拡張をせずそのまま結合）
     uint64_t va_64 = ((uint64_t)va_hi << 32) | va_lo;
 
     uint32_t vpn[3];
@@ -40,7 +39,6 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
 
         // V ビット判定
         if ((pte & PTE_V) == 0) {
-            printf("[MMU FAULT] Invalid PTE (V=0) at Level %d! VA=0x%08X, PC=0x%08X\n", i, va_lo, cpu->pc.lo);
             return false;
         }
 
@@ -50,18 +48,16 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
         bool u = (pte & PTE_U) != 0;
 
         if (!r && w) {
-            printf("[MMU FAULT] Invalid PTE Flags (R=0, W=1) at Level %d! VA=0x%08X, PC=0x%08X\n", i, va_lo, cpu->pc.lo);
             return false;
         }
 
-        // Uモードでの Kernel ページアクセス保護
-        if (cpu->priv_mode == 0 && !u) {
-            printf("[MMU FAULT] User mode accessed Kernel Page! VA=0x%08X, PC=0x%08X\n", va_lo, cpu->pc.lo);
-            return false;
-        }
-
+        // ★ リーフエントリ (r || x) に到達したときのみ保護判定とアドレス計算を行う
         if (r || x) {
-            // リーフ PTE
+            // Uモードでの Kernel ページアクセス保護チェック
+            if (cpu->priv_mode == 0 && !u) {
+                return false;
+            }
+
             uint64_t pte_ppn = (pte >> 10) & 0x000FFFFFFFFFFFFULL;
 
             if (i == 0) {
@@ -77,10 +73,10 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
             return true;
         }
 
+        // 中間テーブルポインタを辿る
         uint64_t next_ppn = (pte >> 10) & 0x000FFFFFFFFFFFFULL;
         a = (uint32_t)(next_ppn << 12);
     }
 
-    printf("[MMU FAULT] No leaf PTE found for VA=0x%08X, PC=0x%08X\n", va_lo, cpu->pc.lo);
     return false;
 }
