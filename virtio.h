@@ -17,6 +17,48 @@ static const unsigned char fs_img[] = {0};
 static const unsigned int fs_img_len = 0;
 #endif
 
+// ★ ディスク書き込み差分キャッシュ (SRAM 32KB 使用)
+#define CACHE_SECTORS 16
+typedef struct {
+    uint64_t sector;
+    uint8_t data[512];
+    bool valid;
+} SectorCache;
+
+static SectorCache g_sector_cache[CACHE_SECTORS];
+
+static inline void cache_write_sector(uint64_t sector, const uint8_t *src) {
+    for (int i = 0; i < CACHE_SECTORS; i++) {
+        if (g_sector_cache[i].valid && g_sector_cache[i].sector == sector) {
+            memcpy(g_sector_cache[i].data, src, 512);
+            return;
+        }
+    }
+    for (int i = 0; i < CACHE_SECTORS; i++) {
+        if (!g_sector_cache[i].valid) {
+            g_sector_cache[i].sector = sector;
+            memcpy(g_sector_cache[i].data, src, 512);
+            g_sector_cache[i].valid = true;
+            return;
+        }
+    }
+    static int victim = 0;
+    g_sector_cache[victim].sector = sector;
+    memcpy(g_sector_cache[victim].data, src, 512);
+    g_sector_cache[victim].valid = true;
+    victim = (victim + 1) % CACHE_SECTORS;
+}
+
+static inline bool cache_read_sector(uint64_t sector, uint8_t *dst) {
+    for (int i = 0; i < CACHE_SECTORS; i++) {
+        if (g_sector_cache[i].valid && g_sector_cache[i].sector == sector) {
+            memcpy(dst, g_sector_cache[i].data, 512);
+            return true;
+        }
+    }
+    return false;
+}
+
 static uint32_t g_virtio_status = 0;
 static uint32_t g_virtio_queue_ready = 0;
 static uint32_t g_virtio_queue_sel = 0;
@@ -90,22 +132,45 @@ static inline void handle_queue_notify(void) {
     reg64_t  status_paddr_reg = mem_read64_phys(d2_addr);
     uint32_t status_paddr = status_paddr_reg.lo;
 
-    // Read要求 (req_type == 0): fs.img からデータをゲストRAMへコピー
+    // Read要求 (req_type == 0): Flash ROM + RAM差分キャッシュから読み込み
     if (req_type == 0) {
-        uint64_t img_offset = sector * 512;
-        for (uint32_t i = 0; i < data_len; i++) {
-            uint8_t byte_val = 0;
-            if ((img_offset + i) < fs_img_len) {
-                byte_val = fs_img[img_offset + i];
+        for (uint32_t offset = 0; offset < data_len; offset += 512) {
+            uint64_t cur_sector = sector + (offset / 512);
+            uint8_t sector_buf[512];
+
+            uint64_t img_offset = cur_sector * 512;
+            for (int i = 0; i < 512; i++) {
+                if ((img_offset + i) < fs_img_len) {
+                    sector_buf[i] = fs_img[img_offset + i];
+                } else {
+                    sector_buf[i] = 0;
+                }
             }
-            mem_write8_phys(data_paddr + i, byte_val);
+
+            // RAM上の差分があれば上書き
+            cache_read_sector(cur_sector, sector_buf);
+
+            for (int i = 0; i < 512; i++) {
+                mem_write8_phys(data_paddr + offset + i, sector_buf[i]);
+            }
+        }
+    } 
+    // Write要求 (req_type == 1): RAM差分キャッシュへ書き込み
+    else if (req_type == 1) {
+        for (uint32_t offset = 0; offset < data_len; offset += 512) {
+            uint64_t cur_sector = sector + (offset / 512);
+            uint8_t sector_buf[512];
+            for (int i = 0; i < 512; i++) {
+                sector_buf[i] = mem_read8_phys(data_paddr + offset + i);
+            }
+            cache_write_sector(cur_sector, sector_buf);
         }
     }
 
-    // ステータス 0 (成功) を書き込み
+    // ステータス 0 (成功)
     mem_write8_phys(status_paddr, 0);
 
-    // struct buf の b->disk (offset 4) をピンポイントで 0 にクリア
+    // struct buf の b->disk をピンポイントで 0 にクリア
     mem_write32_phys(data_paddr - 84, 0);
 
     // VirtIO used ring の更新
