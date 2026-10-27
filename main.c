@@ -7,8 +7,8 @@
 #include "decode_c.h"
 #include "mmu.h"
 
-// ゲスト物理メモリのサイズ (384KB)
-#define RAM_SIZE (384 * 1024)
+// ゲスト物理メモリのサイズ (xv6用384KB + C言語スタック専用64KB = 448KB)
+#define RAM_SIZE ((384 + 64) * 1024)
 #define RAM_BASE 0x80000000ULL
 
 static uint8_t guest_ram[RAM_SIZE];
@@ -29,6 +29,7 @@ static inline uint8_t* paddr_to_host(uint32_t paddr) {
 
 // ============================================================================
 // 1. 物理アドレス直引きメモリアクセス関数群 (_phys)
+//    ※ MMUの Page Table Walk や Device MMIO で使用
 // ============================================================================
 
 uint8_t mem_read8_phys(uint32_t paddr) {
@@ -115,6 +116,7 @@ void mem_write64_phys(uint32_t paddr, reg64_t val) {
 
 // ============================================================================
 // 2. MMU (仮想アドレス Sv39) 経由の公開メモリアクセス関数群
+//    ※ CPUの実行・ロード・ストア処理から呼び出される
 // ============================================================================
 
 uint8_t mem_read8(uint32_t vaddr) {
@@ -204,35 +206,41 @@ int main(void) {
     memset(&cpu, 0, sizeof(RV64CPU));
     memset(guest_ram, 0, RAM_SIZE);
 
-    // ★ 初期特権モードを Machine モード (3) に設定
-    cpu.priv_mode = 3;
-
-    g_cpu = &cpu;
+    cpu.priv_mode = 3; // Mモードスタート
+    g_cpu = &cpu;      // グローバルポインタに設定
 
     if (kernel_bin_len > RAM_SIZE) {
         printf("Error: Kernel binary is too large for guest RAM! (%u bytes)\n", (unsigned int)kernel_bin_len);
         return -1;
     }
 
+    // フラッシュROM上の .rodata からゲストRAMのベースへコピー
     memcpy(&guest_ram[0], kernel_bin, kernel_bin_len);
     printf("Kernel binary loaded successfully. Size: %u bytes\n", (unsigned int)kernel_bin_len);
 
+    // PCの初期値を設定 (xv6のエントリポイント: 0x80000000)
     cpu.pc.lo = (uint32_t)RAM_BASE;
-    cpu.pc.hi = 0xFFFFFFFF;
+    cpu.pc.hi = 0xFFFFFFFF; // 0x80000000 を RV64 仕様通り 0xFFFFFFFF80000000 に符号拡張
     
-    cpu.x[2].lo = (uint32_t)(RAM_BASE + kernel_bin_len + 0x2000);
+    // スタックポインタ (sp = x2) の初期値を 448KB 最末尾 (0x80070000) に置く
+    // これにより xv6 の PHYSTOP (0x80060000) と衝突せず、スタック破壊を回避できる
+    cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE);
     cpu.x[2].hi = 0xFFFFFFFF;
 
     printf("Starting CPU execution loop with MMU support...\n");
 
     unsigned long long inst_count = 0;
 
+    // フェッチ・実行メインループ
     while (!cpu.halted) {
         uint32_t vaddr = cpu.pc.lo;
         
+        // MMU経由で下位ハーフワードをフェッチ
         uint16_t half = mem_read16(vaddr);
 
+        // 最下位2ビットで命令長を判定 (11なら32bit、それ以外は16bit RVC)
         if ((half & 0x3) == 0x3) {
+            // --- 32ビット標準命令 ---
             if (vaddr % 2 != 0) {
                 printf("[ERROR] Misaligned instruction fetch! PC = 0x%08X\n", vaddr);
                 cpu.halted = true;
@@ -240,13 +248,17 @@ int main(void) {
             }
 
             uint32_t inst = mem_read32(vaddr);
+
             execute_instruction(&cpu, inst);
+
         } else {
+            // --- 16ビット圧縮命令 (RVC) ---
             execute_compressed_instruction(&cpu, half);
         }
         
         inst_count++;
 
+        // 一定命令数ごとの進捗表示
         if (inst_count % 5000000 == 0) {
             printf("[Stats] Executed %llu insts. PC: 0x%08X_%08X\n", inst_count, cpu.pc.hi, cpu.pc.lo);
         }

@@ -319,11 +319,15 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 uint32_t csr_addr = inst >> 20;
                 
                 if (funct3 == 0x0) {
-                    if (inst == 0x30200073) {        // mret
+                    if (inst == 0x30200073) {        // mret (★ 特権モード復元を追加)
+                        uint64_t mstatus_val = ((uint64_t)cpu->mstatus.hi << 32) | cpu->mstatus.lo;
+                        cpu->priv_mode = (mstatus_val >> 11) & 0x3; // MPP (bits 12:11)
                         cpu->pc = cpu->mepc;
                         if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
                         return;
-                    } else if (inst == 0x10200073) { // sret
+                    } else if (inst == 0x10200073) { // sret (★ 特権モード復元を追加)
+                        uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
+                        cpu->priv_mode = (sstatus_val >> 8) & 0x1;  // SPP (bit 8)
                         cpu->pc = cpu->sepc;
                         if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
                         return;
@@ -409,10 +413,10 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x2F: // AMO 命令群 (★ MMU 経由のアクセスに全面修正)
+        case 0x2F: // AMO 命令群 (★ MMU 経由のアクセスに修正)
             {
                 uint32_t funct5 = (funct7 >> 2) & 0x1F;
-                uint32_t vaddr  = cpu->x[rs1].lo; // 仮想アドレスとして取得
+                uint32_t vaddr  = cpu->x[rs1].lo;
                 bool is_64      = (funct3 == 3);
 
                 if (is_64) {
@@ -440,7 +444,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
                     if (rd != 0) {
                         if (funct5 == 0x03) {
-                            cpu->x[rd].lo = 0; // sc.d 成功
+                            cpu->x[rd].lo = 0;
                             cpu->x[rd].hi = 0;
                         } else {
                             cpu->x[rd] = old_val;
@@ -469,7 +473,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
                     if (rd != 0) {
                         if (funct5 == 0x03) {
-                            cpu->x[rd].lo = 0; // sc.w 成功
+                            cpu->x[rd].lo = 0;
                             cpu->x[rd].hi = 0;
                         } else {
                             reg64_sext32(&cpu->x[rd], old_val);
