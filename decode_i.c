@@ -2,6 +2,16 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+extern uint8_t  mem_read8(uint32_t paddr);
+extern uint16_t mem_read16(uint32_t paddr);
+extern uint32_t mem_read32(uint32_t paddr);
+extern reg64_t  mem_read64(uint32_t paddr);
+
+extern void mem_write8(uint32_t paddr, uint8_t val);
+extern void mem_write16(uint32_t paddr, uint16_t val);
+extern void mem_write32(uint32_t paddr, uint32_t val);
+extern void mem_write64(uint32_t paddr, reg64_t val);
+
 static inline void reg64_add(reg64_t *d, reg64_t a, reg64_t b) {
     uint32_t lo = a.lo + b.lo;
     uint32_t carry = (lo < a.lo) ? 1 : 0;
@@ -313,7 +323,42 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 uint32_t csr_addr = inst >> 20;
                 
                 if (funct3 == 0x0) {
-                    if (inst == 0x30200073) {        // mret
+                    if (inst == 0x00000073) { // ★ ecall (システムコール発生)
+                        cpu->sepc = cpu->pc; // 現在の ecall の PC を保存
+                        if (cpu->priv_mode == 0) { // User Mode からの ecall
+                            cpu->scause.lo = 8; // Environment call from U-mode
+                            cpu->scause.hi = 0;
+                            
+                            // sstatus の SPP(ビット8), SPIE(ビット5), SIE(ビット1) を更新
+                            uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
+                            uint64_t sie = (sstatus_val >> 1) & 1;
+                            sstatus_val &= ~(1ULL << 8);                              // SPP = 0 (User Mode)
+                            sstatus_val = (sstatus_val & ~(1ULL << 5)) | (sie << 5); // SPIE = SIE
+                            sstatus_val &= ~(1ULL << 1);                              // SIE = 0
+                            cpu->sstatus.lo = (uint32_t)sstatus_val;
+                            cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
+
+                            cpu->priv_mode = 1; // Sモード (Supervisor Mode) に昇格
+                            cpu->pc.lo = cpu->stvec.lo & ~0x3U; // トラップハンドラ (stvec) へジャンプ
+                            cpu->pc.hi = cpu->stvec.hi;
+                        } else { // Supervisor Mode からの ecall
+                            cpu->scause.lo = 9; // Environment call from S-mode
+                            cpu->scause.hi = 0;
+                            
+                            uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
+                            uint64_t sie = (sstatus_val >> 1) & 1;
+                            sstatus_val |= (1ULL << 8);                               // SPP = 1 (Supervisor Mode)
+                            sstatus_val = (sstatus_val & ~(1ULL << 5)) | (sie << 5); // SPIE = SIE
+                            sstatus_val &= ~(1ULL << 1);                              // SIE = 0
+                            cpu->sstatus.lo = (uint32_t)sstatus_val;
+                            cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
+
+                            cpu->priv_mode = 1;
+                            cpu->pc.lo = cpu->stvec.lo & ~0x3U;
+                            cpu->pc.hi = cpu->stvec.hi;
+                        }
+                        return; // ★ トラップ処理のため PC += 4 を行わずにリターン！
+                    } else if (inst == 0x30200073) { // mret
                         uint64_t mstatus_val = ((uint64_t)cpu->mstatus.hi << 32) | cpu->mstatus.lo;
                         cpu->priv_mode = (mstatus_val >> 11) & 0x3; // MPP
                         uint64_t mpie = (mstatus_val >> 7) & 1;
@@ -325,24 +370,22 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
                         cpu->pc = cpu->mepc;
                         return;
-                        // decode_i.c の sret 処理内
-                       } else if (inst == 0x10200073) { // sret
-                            uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
-                            cpu->priv_mode = (sstatus_val >> 8) & 0x1; // SPP (0: User, 1: Supervisor)
-                            uint64_t spie = (sstatus_val >> 5) & 1;
-                            sstatus_val = (sstatus_val & ~(1ULL << 1)) | (spie << 1);
-                            sstatus_val |= (1ULL << 5);
-                            sstatus_val &= ~(1ULL << 8);
-                            cpu->sstatus.lo = (uint32_t)sstatus_val;
-                            cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
-                        
-                            // ★ 以下のログを追加
-                            printf("[DEBUG sret] Jumping to sepc=0x%08X, new priv_mode=%d, satp=0x%08X\n",
-                                   cpu->sepc.lo, cpu->priv_mode, cpu->satp.lo);
-                        
-                            cpu->pc = cpu->sepc;
-                            return;
-                        } else if (inst == 0x10500073) { // wfi
+                    } else if (inst == 0x10200073) { // sret
+                        uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
+                        cpu->priv_mode = (sstatus_val >> 8) & 0x1; // SPP (0: User, 1: Supervisor)
+                        uint64_t spie = (sstatus_val >> 5) & 1;
+                        sstatus_val = (sstatus_val & ~(1ULL << 1)) | (spie << 1);
+                        sstatus_val |= (1ULL << 5);
+                        sstatus_val &= ~(1ULL << 8);
+                        cpu->sstatus.lo = (uint32_t)sstatus_val;
+                        cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
+
+                        printf("[DEBUG sret] Jumping to sepc=0x%08X, new priv_mode=%d, satp=0x%08X\n",
+                               cpu->sepc.lo, cpu->priv_mode, cpu->satp.lo);
+
+                        cpu->pc = cpu->sepc;
+                        return;
+                    } else if (inst == 0x10500073) { // wfi
                         reg64_t four = { .lo = 4, .hi = 0 };
                         reg64_add(&cpu->pc, cpu->pc, four);
                         return;
