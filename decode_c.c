@@ -30,7 +30,6 @@ static inline uint32_t get_pc32(RV64CPU *cpu) {
     return cpu->pc.lo;
 }
 
-// ★ 修正: PCを更新する際、0x80000000以上は 0xFFFFFFFF に符号拡張する
 static inline void set_pc32(RV64CPU *cpu, uint32_t val) {
     cpu->pc.lo = val;
     cpu->pc.hi = ((int32_t)val < 0) ? 0xFFFFFFFF : 0x00000000;
@@ -133,11 +132,11 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 return;
             } else if (funct3 == 0x3) {
                 if (rd_rs1 == 2) {
-                    // c.addi16sp
+                    // c.addi16sp (inst >> 3 で inst[4:3] を抽出)
                     int32_t nzimm = (((inst >> 12) & 0x1) << 9) |
-                                    (((inst >> 4)  & 0x3) << 7) |
-                                    (((inst >> 2)  & 0x1) << 5) |
+                                    (((inst >> 3)  & 0x3) << 7) |
                                     (((inst >> 5)  & 0x1) << 6) |
+                                    (((inst >> 2)  & 0x1) << 5) |
                                     (((inst >> 6)  & 0x1) << 4);
                     if ((inst >> 12) & 0x1) nzimm |= 0xfffffc00;
                     set_reg64(cpu, 2, get_reg64(cpu, 2) + (int64_t)nzimm);
@@ -189,7 +188,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 set_pc32(cpu, get_pc32(cpu) + offset);
                 return;
             } else if (funct3 == 0x6) {
-                // c.beqz
+                // c.beqz (inst >> 10 で offset[4:3] を抽出)
                 int32_t offset = (((inst >> 12) & 1) << 8) |
                                  (((inst >> 5)  & 3) << 6) |
                                  (((inst >> 2)  & 1) << 5) |
@@ -204,7 +203,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x7) {
-                // c.bnez
+                // c.bnez (inst >> 10 で offset[4:3] を抽出)
                 int32_t offset = (((inst >> 12) & 1) << 8) |
                                  (((inst >> 5)  & 3) << 6) |
                                  (((inst >> 2)  & 1) << 5) |
@@ -273,7 +272,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                     }
                 } else {
                     if (rs2 == 0) {
-                        // c.jalr (★ 修正: 戻りアドレスの 64bit 符号拡張)
+                        // c.jalr
                         uint32_t target = (uint32_t)get_reg64(cpu, rd_rs1) & ~1U;
                         uint32_t next_pc_lo = get_pc32(cpu) + 2;
                         uint64_t next_pc = ((uint64_t)(((int32_t)next_pc_lo < 0) ? 0xFFFFFFFFU : 0U) << 32) | next_pc_lo;
