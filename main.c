@@ -5,6 +5,7 @@
 #include "cpu.h"
 #include "uart.h"
 #include "clint.h"
+#include "virtio.h"
 #include "decode_c.h"
 #include "mmu.h"
 
@@ -59,6 +60,9 @@ uint32_t mem_read32_phys(uint32_t paddr) {
     if (clint_is_addr(paddr)) {
         return clint_read32(paddr);
     }
+    if (virtio_is_addr(paddr)) {
+        return virtio_read32(paddr);
+    }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) return 0;
     uint32_t val;
@@ -100,6 +104,10 @@ void mem_write32_phys(uint32_t paddr, uint32_t val) {
     }
     if (clint_is_addr(paddr)) {
         clint_write32(paddr, val);
+        return;
+    }
+    if (virtio_is_addr(paddr)) {
+        virtio_write32(paddr, val);
         return;
     }
 
