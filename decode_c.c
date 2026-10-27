@@ -32,12 +32,12 @@ static inline uint32_t get_pc32(RV64CPU *cpu) {
 
 static inline void set_pc32(RV64CPU *cpu, uint32_t val) {
     cpu->pc.lo = val;
-    cpu->pc.hi = 0x00000000; // 符号拡張を解除[cite: 14]
+    cpu->pc.hi = 0x00000000;
 }
 
 static inline void advance_pc2(RV64CPU *cpu) {
     cpu->pc.lo += 2;
-    cpu->pc.hi = 0x00000000; // 符号拡張を解除[cite: 14]
+    cpu->pc.hi = 0x00000000;
 }
 
 void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
@@ -132,7 +132,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 return;
             } else if (funct3 == 0x3) {
                 if (rd_rs1 == 2) {
-                    // c.addi16sp (inst >> 3 で inst[4:3] を抽出)
+                    // c.addi16sp
                     int32_t nzimm = (((inst >> 12) & 0x1) << 9) |
                                     (((inst >> 3)  & 0x3) << 7) |
                                     (((inst >> 5)  & 0x1) << 6) |
@@ -188,7 +188,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 set_pc32(cpu, get_pc32(cpu) + offset);
                 return;
             } else if (funct3 == 0x6) {
-                // c.beqz (inst >> 10 で offset[4:3] を抽出)
+                // c.beqz
                 int32_t offset = (((inst >> 12) & 1) << 8) |
                                  (((inst >> 5)  & 3) << 6) |
                                  (((inst >> 2)  & 1) << 5) |
@@ -203,7 +203,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                 advance_pc2(cpu);
                 return;
             } else if (funct3 == 0x7) {
-                // c.bnez (inst >> 10 で offset[4:3] を抽出)
+                // c.bnez
                 int32_t offset = (((inst >> 12) & 1) << 8) |
                                  (((inst >> 5)  & 3) << 6) |
                                  (((inst >> 2)  & 1) << 5) |
@@ -275,7 +275,7 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                         // c.jalr
                         uint32_t target = (uint32_t)get_reg64(cpu, rd_rs1) & ~1U;
                         uint32_t next_pc_lo = get_pc32(cpu) + 2;
-                        uint64_t next_pc = ((uint64_t)(((int32_t)next_pc_lo < 0) ? 0xFFFFFFFFU : 0U) << 32) | next_pc_lo;
+                        uint64_t next_pc = (uint64_t)next_pc_lo;
                         set_reg64(cpu, 1, next_pc);
                         set_pc32(cpu, target);
                         return;

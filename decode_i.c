@@ -2,8 +2,6 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-// --- 純32bit筆算型ヘルパー ---
-
 static inline void reg64_add(reg64_t *d, reg64_t a, reg64_t b) {
     uint32_t lo = a.lo + b.lo;
     uint32_t carry = (lo < a.lo) ? 1 : 0;
@@ -244,12 +242,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 int32_t imm_u = get_u_imm(inst);
                 reg64_t offset;
                 reg64_from_imm32(&offset, imm_u);
-                
                 reg64_add(&cpu->x[rd], cpu->pc, offset);
-                
-                //if ((cpu->x[rd].lo & 0x80000000) != 0) {
-                    //cpu->x[rd].hi = 0xFFFFFFFF;
-                    //}
             }
             break;
 
@@ -284,10 +277,6 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 reg64_t target;
                 reg64_add(&target, cpu->x[rs1], imm_reg);
                 target.lo &= ~1U;
-
-                if ((target.lo & 0x80000000) != 0) {
-                    target.hi = 0xFFFFFFFF;
-                }
 
                 cpu->pc = target;
                 return;
@@ -326,17 +315,34 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 if (funct3 == 0x0) {
                     if (inst == 0x30200073) {        // mret
                         uint64_t mstatus_val = ((uint64_t)cpu->mstatus.hi << 32) | cpu->mstatus.lo;
-                        cpu->priv_mode = (mstatus_val >> 11) & 0x3;
+                        cpu->priv_mode = (mstatus_val >> 11) & 0x3; // MPP
+                        uint64_t mpie = (mstatus_val >> 7) & 1;
+                        mstatus_val = (mstatus_val & ~(1ULL << 3)) | (mpie << 3); // MIE = MPIE
+                        mstatus_val |= (1ULL << 7);                              // MPIE = 1
+                        mstatus_val &= ~(3ULL << 11);                            // MPP = 0 (User)
+                        cpu->mstatus.lo = (uint32_t)mstatus_val;
+                        cpu->mstatus.hi = (uint32_t)(mstatus_val >> 32);
+
                         cpu->pc = cpu->mepc;
-                        if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
                         return;
-                    } else if (inst == 0x10200073) { // sret
-                        uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
-                        cpu->priv_mode = (sstatus_val >> 8) & 0x1;
-                        cpu->pc = cpu->sepc;
-                        if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
-                        return;
-                    } else if (inst == 0x10500073) { // wfi
+                        // decode_i.c の sret 処理内
+                       } else if (inst == 0x10200073) { // sret
+                            uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
+                            cpu->priv_mode = (sstatus_val >> 8) & 0x1; // SPP (0: User, 1: Supervisor)
+                            uint64_t spie = (sstatus_val >> 5) & 1;
+                            sstatus_val = (sstatus_val & ~(1ULL << 1)) | (spie << 1);
+                            sstatus_val |= (1ULL << 5);
+                            sstatus_val &= ~(1ULL << 8);
+                            cpu->sstatus.lo = (uint32_t)sstatus_val;
+                            cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
+                        
+                            // ★ 以下のログを追加
+                            printf("[DEBUG sret] Jumping to sepc=0x%08X, new priv_mode=%d, satp=0x%08X\n",
+                                   cpu->sepc.lo, cpu->priv_mode, cpu->satp.lo);
+                        
+                            cpu->pc = cpu->sepc;
+                            return;
+                        } else if (inst == 0x10500073) { // wfi
                         reg64_t four = { .lo = 4, .hi = 0 };
                         reg64_add(&cpu->pc, cpu->pc, four);
                         return;
@@ -403,9 +409,6 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
                     if (target_csr != NULL) {
                         *target_csr = new_val;
-                        if ((target_csr == &cpu->sepc || target_csr == &cpu->mepc) && (new_val.lo & 0x80000000)) {
-                            target_csr->hi = 0xFFFFFFFF;
-                        }
                     }
                     if (csr_addr == 0x180) {
                         cpu->satp = new_val;

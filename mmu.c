@@ -9,17 +9,19 @@ extern reg64_t  mem_read64_phys(uint32_t paddr);
 #define PTE_R (1U << 1)
 #define PTE_W (1U << 2)
 #define PTE_X (1U << 3)
+#define PTE_U (1U << 4)
 
 bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType access, uint32_t *pa_out) {
     uint64_t satp_64 = ((uint64_t)cpu->satp.hi << 32) | cpu->satp.lo;
     uint32_t mode = (uint32_t)(satp_64 >> 60) & 0xF;
 
-    // Mモード または satp.MODE != 8 (Sv39無効) の場合は直引き
+    // Mモード または satp.MODE != 8 (Sv39無効) の場合は物理アドレス直引き
     if (cpu->priv_mode == 3 || mode != 8) {
         *pa_out = va_lo;
         return true;
     }
 
+    // 64-bit 仮想アドレスの構築（無理な符号拡張をせずそのまま結合）
     uint64_t va_64 = ((uint64_t)va_hi << 32) | va_lo;
 
     uint32_t vpn[3];
@@ -45,9 +47,16 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
         bool r = (pte & PTE_R) != 0;
         bool w = (pte & PTE_W) != 0;
         bool x = (pte & PTE_X) != 0;
+        bool u = (pte & PTE_U) != 0;
 
         if (!r && w) {
             printf("[MMU FAULT] Invalid PTE Flags (R=0, W=1) at Level %d! VA=0x%08X, PC=0x%08X\n", i, va_lo, cpu->pc.lo);
+            return false;
+        }
+
+        // Uモードでの Kernel ページアクセス保護
+        if (cpu->priv_mode == 0 && !u) {
+            printf("[MMU FAULT] User mode accessed Kernel Page! VA=0x%08X, PC=0x%08X\n", va_lo, cpu->pc.lo);
             return false;
         }
 

@@ -120,7 +120,7 @@ void mem_write64_phys(uint32_t paddr, reg64_t val) {
 
 uint8_t mem_read8(uint32_t vaddr) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = ((int32_t)vaddr < 0) ? 0xFFFFFFFF : 0x00000000;
+    uint32_t va_hi = 0x00000000;
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read8_phys(paddr);
     }
@@ -129,7 +129,7 @@ uint8_t mem_read8(uint32_t vaddr) {
 
 uint16_t mem_read16(uint32_t vaddr) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = ((int32_t)vaddr < 0) ? 0xFFFFFFFF : 0x00000000;
+    uint32_t va_hi = 0x00000000;
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read16_phys(paddr);
     }
@@ -138,7 +138,7 @@ uint16_t mem_read16(uint32_t vaddr) {
 
 uint32_t mem_read32(uint32_t vaddr) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = ((int32_t)vaddr < 0) ? 0xFFFFFFFF : 0x00000000;
+    uint32_t va_hi = 0x00000000;
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read32_phys(paddr);
     }
@@ -156,7 +156,7 @@ reg64_t mem_read64(uint32_t vaddr) {
 
 void mem_write8(uint32_t vaddr, uint8_t val) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = ((int32_t)vaddr < 0) ? 0xFFFFFFFF : 0x00000000;
+    uint32_t va_hi = 0x00000000;
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
         mem_write8_phys(paddr, val);
     }
@@ -164,7 +164,7 @@ void mem_write8(uint32_t vaddr, uint8_t val) {
 
 void mem_write16(uint32_t vaddr, uint16_t val) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = ((int32_t)vaddr < 0) ? 0xFFFFFFFF : 0x00000000;
+    uint32_t va_hi = 0x00000000;
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
         mem_write16_phys(paddr, val);
     }
@@ -172,7 +172,7 @@ void mem_write16(uint32_t vaddr, uint16_t val) {
 
 void mem_write32(uint32_t vaddr, uint32_t val) {
     uint32_t paddr = vaddr;
-    uint32_t va_hi = ((int32_t)vaddr < 0) ? 0xFFFFFFFF : 0x00000000;
+    uint32_t va_hi = 0x00000000;
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
         mem_write32_phys(paddr, val);
         return;
@@ -219,7 +219,7 @@ int main(void) {
     printf("Kernel binary loaded successfully. Size: %u bytes\n", (unsigned int)kernel_bin_len);
 
     cpu.pc.lo = (uint32_t)RAM_BASE;
-    cpu.pc.hi = 0x00000000; // 0xFFFFFFFF から 0x00000000 に変更[cite: 16]
+    cpu.pc.hi = 0x00000000;
     
     cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE);
     cpu.x[2].hi = 0x00000000;
