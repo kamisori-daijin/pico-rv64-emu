@@ -177,6 +177,8 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             {
                 reg64_t imm_val;
                 reg64_from_imm32(&imm_val, imm_i);
+                // ★ 修正: RV64 の即値シフト量は 6bit (inst[25:20])
+                uint32_t shamt6 = (inst >> 20) & 0x3F;
                 switch (funct3) {
                     case 0x0: reg64_add(&cpu->x[rd], cpu->x[rs1], imm_val); break;
                     case 0x2: reg64_from_imm32(&cpu->x[rd], reg64_slt(cpu->x[rs1], imm_val) ? 1 : 0); break;
@@ -184,10 +186,10 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                     case 0x4: cpu->x[rd].lo = cpu->x[rs1].lo ^ imm_val.lo; cpu->x[rd].hi = cpu->x[rs1].hi ^ imm_val.hi; break;
                     case 0x6: cpu->x[rd].lo = cpu->x[rs1].lo | imm_val.lo; cpu->x[rd].hi = cpu->x[rs1].hi | imm_val.hi; break;
                     case 0x7: cpu->x[rd].lo = cpu->x[rs1].lo & imm_val.lo; cpu->x[rd].hi = cpu->x[rs1].hi & imm_val.hi; break;
-                    case 0x1: reg64_sll(&cpu->x[rd], cpu->x[rs1], rs2); break;
+                    case 0x1: reg64_sll(&cpu->x[rd], cpu->x[rs1], shamt6); break;
                     case 0x5:
-                        if ((inst & 0x40000000) == 0) reg64_srl(&cpu->x[rd], cpu->x[rs1], rs2);
-                        else reg64_sra(&cpu->x[rd], cpu->x[rs1], rs2);
+                        if ((inst & 0x40000000) == 0) reg64_srl(&cpu->x[rd], cpu->x[rs1], shamt6);
+                        else reg64_sra(&cpu->x[rd], cpu->x[rs1], shamt6);
                         break;
                 }
             }
@@ -284,6 +286,10 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 reg64_add(&target, cpu->x[rs1], imm_reg);
                 target.lo &= ~1U;
 
+                if ((target.lo & 0x80000000) != 0) {
+                    target.hi = 0xFFFFFFFF;
+                }
+
                 cpu->pc = target;
                 return;
             }
@@ -319,13 +325,13 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 uint32_t csr_addr = inst >> 20;
                 
                 if (funct3 == 0x0) {
-                    if (inst == 0x30200073) {        // mret (★ 特権モード復元を追加)
+                    if (inst == 0x30200073) {        // mret
                         uint64_t mstatus_val = ((uint64_t)cpu->mstatus.hi << 32) | cpu->mstatus.lo;
                         cpu->priv_mode = (mstatus_val >> 11) & 0x3; // MPP (bits 12:11)
                         cpu->pc = cpu->mepc;
                         if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
                         return;
-                    } else if (inst == 0x10200073) { // sret (★ 特権モード復元を追加)
+                    } else if (inst == 0x10200073) { // sret
                         uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
                         cpu->priv_mode = (sstatus_val >> 8) & 0x1;  // SPP (bit 8)
                         cpu->pc = cpu->sepc;
@@ -413,14 +419,13 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x2F: // AMO 命令群 (★ MMU 経由のアクセスに修正)
+        case 0x2F: // AMO
             {
                 uint32_t funct5 = (funct7 >> 2) & 0x1F;
                 uint32_t vaddr  = cpu->x[rs1].lo;
                 bool is_64      = (funct3 == 3);
 
                 if (is_64) {
-                    // --- 64-bit AMO ---
                     reg64_t old_val = mem_read64(vaddr);
                     uint64_t old_u64 = ((uint64_t)old_val.hi << 32) | old_val.lo;
                     uint64_t src_u64 = ((uint64_t)cpu->x[rs2].hi << 32) | cpu->x[rs2].lo;
@@ -451,7 +456,6 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                         }
                     }
                 } else {
-                    // --- 32-bit AMO (amoswap.w 等) ---
                     uint32_t old_val = mem_read32(vaddr);
                     uint32_t src_val = cpu->x[rs2].lo;
                     uint32_t new_val = 0;
