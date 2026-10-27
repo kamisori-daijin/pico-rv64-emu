@@ -20,9 +20,6 @@ static uint8_t guest_ram[RAM_SIZE];
 // MMUからCPUのCSR状態等を参照するためのグローバルポインタ
 RV64CPU *g_cpu = NULL;
 
-// ピンポイントトレース用フラグ
-bool g_trace = false;
-
 // --- 物理アドレスからホストのゲストRAMポインタへの変換 ---
 static inline uint8_t* paddr_to_host(uint32_t paddr) {
     if (paddr < RAM_BASE || paddr >= (RAM_BASE + RAM_SIZE)) {
@@ -146,6 +143,7 @@ uint32_t mem_read32(uint32_t vaddr) {
         return mem_read32_phys(paddr);
     }
     printf("[READ FAULT] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
+    fflush(stdout);
     return 0;
 }
 
@@ -180,6 +178,7 @@ void mem_write32(uint32_t vaddr, uint32_t val) {
         return;
     }
     printf("[WRITE FAULT] VA=0x%08X, Val=0x%08X at PC=0x%08X\n", vaddr, val, g_cpu->pc.lo);
+    fflush(stdout);
 }
 
 void mem_write64(uint32_t vaddr, reg64_t val) {
@@ -226,18 +225,12 @@ int main(void) {
     cpu.x[2].hi = 0xFFFFFFFF;
 
     printf("Starting CPU execution loop with MMU support...\n");
+    fflush(stdout);
 
     unsigned long long inst_count = 0;
 
     while (!cpu.halted) {
         uint32_t vaddr = cpu.pc.lo;
-
-        // bootingメッセージ完了後にレジスタと命令アドレスを出力
-        if (g_trace) {
-            printf("[TRACE] PC=0x%08X sp=0x%08X a0=0x%08X a5=0x%08X\n", 
-                   vaddr, cpu.x[2].lo, cpu.x[10].lo, cpu.x[15].lo);
-        }
-
         uint16_t half = mem_read16(vaddr);
 
         if ((half & 0x3) == 0x3) {
@@ -256,6 +249,7 @@ int main(void) {
     }
 
     printf("CPU halted after executing %llu instructions.\n", inst_count);
+    fflush(stdout);
     
     while (1) {
         tight_loop_contents();

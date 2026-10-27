@@ -2,8 +2,6 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-extern bool g_trace;
-
 bool uart_is_addr(uint32_t paddr) {
     return (paddr >= 0x10000000 && paddr < 0x10000100);
 }
@@ -22,10 +20,5 @@ void uart_write8(uint32_t paddr, uint8_t val) {
     if (offset == 0) { // THR (Transmit Holding Register)
         putchar((char)val);
         fflush(stdout);
-
-        // "booting\n" の改行を吐いたらトレースをONにする
-        if (val == '\n') {
-            g_trace = true;
-        }
     }
 }
