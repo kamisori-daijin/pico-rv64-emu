@@ -263,6 +263,11 @@ int main(void) {
         }
         
         inst_count++;
+        if (inst_count % 1000000 == 0) {
+            printf("[HEARTBEAT] Executed %lluM insts | PC=0x%08X | Mode=%d (0:U,1:S,3:M)\n",
+                    inst_count / 1000000, cpu.pc.lo, cpu.priv_mode);
+            fflush(stdout);
+        }
     }
 
     printf("CPU halted after executing %llu instructions.\n", inst_count);
