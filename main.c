@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include "pico/stdlib.h"
 #include "cpu.h"
 #include "uart.h"
@@ -19,6 +20,9 @@ static uint8_t guest_ram[RAM_SIZE];
 // MMUからCPUのCSR状態等を参照するためのグローバルポインタ
 RV64CPU *g_cpu = NULL;
 
+// ピンポイントトレース用フラグ
+bool g_trace = false;
+
 // --- 物理アドレスからホストのゲストRAMポインタへの変換 ---
 static inline uint8_t* paddr_to_host(uint32_t paddr) {
     if (paddr < RAM_BASE || paddr >= (RAM_BASE + RAM_SIZE)) {
@@ -29,7 +33,6 @@ static inline uint8_t* paddr_to_host(uint32_t paddr) {
 
 // ============================================================================
 // 1. 物理アドレス直引きメモリアクセス関数群 (_phys)
-//    ※ MMUの Page Table Walk や Device MMIO で使用
 // ============================================================================
 
 uint8_t mem_read8_phys(uint32_t paddr) {
@@ -69,7 +72,7 @@ uint32_t mem_read32_phys(uint32_t paddr) {
 reg64_t mem_read64_phys(uint32_t paddr) {
     reg64_t val;
     val.lo = mem_read32_phys(paddr);
-    val.hi = mem_read32_phys(paddr + 4);
+    val.hi = mem_read32_phys(paddr + 4U);
     return val;
 }
 
@@ -111,12 +114,11 @@ void mem_write32_phys(uint32_t paddr, uint32_t val) {
 
 void mem_write64_phys(uint32_t paddr, reg64_t val) {
     mem_write32_phys(paddr, val.lo);
-    mem_write32_phys(paddr + 4, val.hi);
+    mem_write32_phys(paddr + 4U, val.hi);
 }
 
 // ============================================================================
 // 2. MMU (仮想アドレス Sv39) 経由の公開メモリアクセス関数群
-//    ※ CPUの実行・ロード・ストア処理から呼び出される
 // ============================================================================
 
 uint8_t mem_read8(uint32_t vaddr) {
@@ -150,7 +152,7 @@ uint32_t mem_read32(uint32_t vaddr) {
 reg64_t mem_read64(uint32_t vaddr) {
     reg64_t val;
     val.lo = mem_read32(vaddr);
-    val.hi = mem_read32(vaddr + 4);
+    val.hi = mem_read32(vaddr + 4U);
     return val;
 }
 
@@ -182,7 +184,7 @@ void mem_write32(uint32_t vaddr, uint32_t val) {
 
 void mem_write64(uint32_t vaddr, reg64_t val) {
     mem_write32(vaddr, val.lo);
-    mem_write32(vaddr + 4, val.hi);
+    mem_write32(vaddr + 4U, val.hi);
 }
 
 // ============================================================================
@@ -207,23 +209,19 @@ int main(void) {
     memset(guest_ram, 0, RAM_SIZE);
 
     cpu.priv_mode = 3; // Mモードスタート
-    g_cpu = &cpu;      // グローバルポインタに設定
+    g_cpu = &cpu;
 
     if (kernel_bin_len > RAM_SIZE) {
         printf("Error: Kernel binary is too large for guest RAM! (%u bytes)\n", (unsigned int)kernel_bin_len);
         return -1;
     }
 
-    // フラッシュROM上の .rodata からゲストRAMのベースへコピー
     memcpy(&guest_ram[0], kernel_bin, kernel_bin_len);
     printf("Kernel binary loaded successfully. Size: %u bytes\n", (unsigned int)kernel_bin_len);
 
-    // PCの初期値を設定 (xv6のエントリポイント: 0x80000000)
     cpu.pc.lo = (uint32_t)RAM_BASE;
-    cpu.pc.hi = 0xFFFFFFFF; // 0x80000000 を RV64 仕様通り 0xFFFFFFFF80000000 に符号拡張
+    cpu.pc.hi = 0xFFFFFFFF;
     
-    // スタックポインタ (sp = x2) の初期値を 448KB 最末尾 (0x80070000) に置く
-    // これにより xv6 の PHYSTOP (0x80060000) と衝突せず、スタック破壊を回避できる
     cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE);
     cpu.x[2].hi = 0xFFFFFFFF;
 
@@ -231,37 +229,30 @@ int main(void) {
 
     unsigned long long inst_count = 0;
 
-    // フェッチ・実行メインループ
     while (!cpu.halted) {
         uint32_t vaddr = cpu.pc.lo;
-        
-        // MMU経由で下位ハーフワードをフェッチ
+
+        // bootingメッセージ完了後にレジスタと命令アドレスを出力
+        if (g_trace) {
+            printf("[TRACE] PC=0x%08X sp=0x%08X a0=0x%08X a5=0x%08X\n", 
+                   vaddr, cpu.x[2].lo, cpu.x[10].lo, cpu.x[15].lo);
+        }
+
         uint16_t half = mem_read16(vaddr);
 
-        // 最下位2ビットで命令長を判定 (11なら32bit、それ以外は16bit RVC)
         if ((half & 0x3) == 0x3) {
-            // --- 32ビット標準命令 ---
             if (vaddr % 2 != 0) {
                 printf("[ERROR] Misaligned instruction fetch! PC = 0x%08X\n", vaddr);
                 cpu.halted = true;
                 break;
             }
-
             uint32_t inst = mem_read32(vaddr);
-
             execute_instruction(&cpu, inst);
-
         } else {
-            // --- 16ビット圧縮命令 (RVC) ---
             execute_compressed_instruction(&cpu, half);
         }
         
         inst_count++;
-
-        // 一定命令数ごとの進捗表示
-        if (inst_count % 5000000 == 0) {
-            printf("[Stats] Executed %llu insts. PC: 0x%08X_%08X\n", inst_count, cpu.pc.hi, cpu.pc.lo);
-        }
     }
 
     printf("CPU halted after executing %llu instructions.\n", inst_count);

@@ -1,31 +1,31 @@
 #include "uart.h"
 #include <stdio.h>
+#include <stdbool.h>
 
-static uint8_t uart_regs[UART_SIZE];
+extern bool g_trace;
 
 bool uart_is_addr(uint32_t paddr) {
-    return (paddr >= UART_BASE && paddr < (UART_BASE + UART_SIZE));
+    return (paddr >= 0x10000000 && paddr < 0x10000100);
 }
 
 uint8_t uart_read8(uint32_t paddr) {
-    uint32_t offset = paddr - UART_BASE;
+    uint32_t offset = paddr - 0x10000000;
     if (offset == 5) {
-        // LSR (Line Status Register): 送信可能状態 (THRE + TEMT)
-        return 0x60;
+        // LSR (Line Status Register): Transmit hold register empty (0x20)
+        return 0x20;
     }
-    if (offset == 0) {
-        // RHR: 受信データ
-        return 0;
-    }
-    return uart_regs[offset];
+    return 0;
 }
 
 void uart_write8(uint32_t paddr, uint8_t val) {
-    uint32_t offset = paddr - UART_BASE;
-    
-    if (offset == 0) {
-            putchar(val);
-            fflush(stdout);
+    uint32_t offset = paddr - 0x10000000;
+    if (offset == 0) { // THR (Transmit Holding Register)
+        putchar((char)val);
+        fflush(stdout);
+
+        // "booting\n" の改行を吐いたらトレースをONにする
+        if (val == '\n') {
+            g_trace = true;
+        }
     }
-    uart_regs[offset] = val;
 }

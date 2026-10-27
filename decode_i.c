@@ -177,7 +177,6 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             {
                 reg64_t imm_val;
                 reg64_from_imm32(&imm_val, imm_i);
-                // ★ 修正: RV64 の即値シフト量は 6bit (inst[25:20])
                 uint32_t shamt6 = (inst >> 20) & 0x3F;
                 switch (funct3) {
                     case 0x0: reg64_add(&cpu->x[rd], cpu->x[rs1], imm_val); break;
@@ -211,7 +210,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
         case 0x03:
             {
-                uint32_t vaddr = cpu->x[rs1].lo + imm_i;
+                uint32_t vaddr = (uint32_t)((int32_t)cpu->x[rs1].lo + imm_i);
                 switch (funct3) {
                     case 0x0: reg64_from_imm32(&cpu->x[rd], (int32_t)(int8_t)mem_read8(vaddr)); break;
                     case 0x1: reg64_from_imm32(&cpu->x[rd], (int32_t)(int16_t)mem_read16(vaddr)); break;
@@ -226,7 +225,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
         case 0x23:
             {
-                uint32_t vaddr = cpu->x[rs1].lo + imm_s;
+                uint32_t vaddr = (uint32_t)((int32_t)cpu->x[rs1].lo + imm_s);
                 switch (funct3) {
                     case 0x0: mem_write8(vaddr, (uint8_t)cpu->x[rs2].lo); break;
                     case 0x1: mem_write16(vaddr, (uint16_t)cpu->x[rs2].lo); break;
@@ -327,13 +326,13 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 if (funct3 == 0x0) {
                     if (inst == 0x30200073) {        // mret
                         uint64_t mstatus_val = ((uint64_t)cpu->mstatus.hi << 32) | cpu->mstatus.lo;
-                        cpu->priv_mode = (mstatus_val >> 11) & 0x3; // MPP (bits 12:11)
+                        cpu->priv_mode = (mstatus_val >> 11) & 0x3;
                         cpu->pc = cpu->mepc;
                         if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
                         return;
                     } else if (inst == 0x10200073) { // sret
                         uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
-                        cpu->priv_mode = (sstatus_val >> 8) & 0x1;  // SPP (bit 8)
+                        cpu->priv_mode = (sstatus_val >> 8) & 0x1;
                         cpu->pc = cpu->sepc;
                         if ((cpu->pc.lo & 0x80000000) != 0) cpu->pc.hi = 0xFFFFFFFF;
                         return;
