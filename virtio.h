@@ -18,7 +18,7 @@ static const unsigned int fs_img_len = 0;
 #endif
 
 // ★ ディスク書き込み差分キャッシュ (SRAM 32KB 使用)
-#define CACHE_SECTORS 16
+#define CACHE_SECTORS 64
 typedef struct {
     uint64_t sector;
     uint8_t data[512];

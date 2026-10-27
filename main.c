@@ -9,7 +9,7 @@
 #include "decode_c.h"
 #include "mmu.h"
 
-#define RAM_SIZE ((384 + 64) * 1024)
+#define RAM_SIZE (384 * 1024)
 #define RAM_BASE 0x80000000ULL
 
 static uint8_t guest_ram[RAM_SIZE];
