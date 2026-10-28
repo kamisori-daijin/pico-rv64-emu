@@ -17,7 +17,8 @@ static const unsigned char fs_img[] = {0};
 static const unsigned int fs_img_len = 0;
 #endif
 
-#define CACHE_SECTORS 64
+// ディスク書き込み差分キャッシュ (64 -> 256 セクタ = 128KB SRAM 使用)
+#define CACHE_SECTORS 128
 typedef struct {
     uint64_t sector;
     uint8_t data[512];
@@ -27,12 +28,14 @@ typedef struct {
 static SectorCache g_sector_cache[CACHE_SECTORS];
 
 static inline void cache_write_sector(uint64_t sector, const uint8_t *src) {
+    // 既存のセクタがあれば更新
     for (int i = 0; i < CACHE_SECTORS; i++) {
         if (g_sector_cache[i].valid && g_sector_cache[i].sector == sector) {
             memcpy(g_sector_cache[i].data, src, 512);
             return;
         }
     }
+    // 空きスロットに新規追加
     for (int i = 0; i < CACHE_SECTORS; i++) {
         if (!g_sector_cache[i].valid) {
             g_sector_cache[i].sector = sector;
@@ -41,7 +44,9 @@ static inline void cache_write_sector(uint64_t sector, const uint8_t *src) {
             return;
         }
     }
+    // キャッシュ溢れ時の警告と追い出し処理
     static int victim = 0;
+    printf("[WARN] Sector cache full! Evicting sector %llu for %llu\n", g_sector_cache[victim].sector, sector);
     g_sector_cache[victim].sector = sector;
     memcpy(g_sector_cache[victim].data, src, 512);
     g_sector_cache[victim].valid = true;
@@ -131,7 +136,9 @@ static inline void handle_queue_notify(void) {
         reg64_t  status_paddr_reg = mem_read64_phys(d2_addr);
         uint32_t status_paddr = status_paddr_reg.lo;
 
-        if (req_type == 0) {
+        if (req_type == 0) { // READ
+            printf("[VIRTIO READ] sector=%llu, len=%u, dst_pa=0x%08X\n", sector, data_len, data_paddr);
+            fflush(stdout);
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
                 uint8_t sector_buf[512];
@@ -151,7 +158,7 @@ static inline void handle_queue_notify(void) {
                     mem_write8_phys(data_paddr + offset + i, sector_buf[i]);
                 }
             }
-        } else if (req_type == 1) {
+        } else if (req_type == 1) { // WRITE
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
                 uint8_t sector_buf[512];
@@ -191,7 +198,6 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
             g_virtio_interrupt_status &= ~val;
             if (g_virtio_interrupt_status == 0) {
                 g_plic_virtio_pending = 0;
-                // ★ UART 割り込みも残っていなければ SEIP をクリア
                 if (g_cpu && !g_plic_uart_pending) {
                     g_cpu->mip.lo &= ~(1U << 9);
                 }

@@ -1,5 +1,8 @@
 #include "decode_c.h"
+#include "mmu.h"     // ★ mmu_translate と FETCH_EXEC のために追加
 #include <stdio.h>
+
+extern uint8_t guest_ram[]; // ★ main.c の RAM 配列を参照
 
 extern uint8_t  mem_read8(uint32_t paddr);
 extern uint16_t mem_read16(uint32_t paddr);
@@ -54,7 +57,25 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                                   (((inst >> 5)  & 0x1) << 3);
                 uint32_t rd = c_reg((inst >> 2) & 0x7);
                 if (nzuimm == 0) {
-                    printf("[ERROR c.addi4spn] Illegal nzuimm=0 at PC=0x%08X\n", cpu->pc.lo);
+                    uint32_t paddr = 0;
+                    bool ok = mmu_translate(cpu, cpu->pc.lo, 0, FETCH_EXEC, &paddr);
+                    printf("\n[CRASH DETECTED]\n");
+                    printf("  PC (VA)   : 0x%08X\n", cpu->pc.lo);
+                    printf("  PA        : 0x%08X (%s)\n", paddr, ok ? "valid" : "translate_fault");
+                    printf("  satp      : 0x%08X\n", cpu->satp.lo);
+                    printf("  priv_mode : %d\n", cpu->priv_mode);
+                    printf("  inst raw  : 0x%04X\n", inst);
+
+                    if (ok && paddr >= 0x80000000U && paddr < 0x80060000U) {
+                        uint32_t ram_off = paddr - 0x80000000U;
+                        printf("  RAM Dump around PA (0x%08X):\n    ", paddr & ~0xFU);
+                        for (int i = 0; i < 16; i += 2) {
+                            uint32_t idx = (ram_off & ~0xFU) + i;
+                            printf("%02X%02X ", guest_ram[idx+1], guest_ram[idx]);
+                        }
+                        printf("\n");
+                    }
+
                     cpu->halted = true;
                     return;
                 }

@@ -84,18 +84,29 @@ static inline void reg64_remu(reg64_t *d, reg64_t a, reg64_t b) {
     }
 }
 
-static inline void reg64_sll(reg64_t *d, reg64_t a, int shift) {
+static inline void reg64_srl(reg64_t *d, reg64_t a, int shift) {
     shift &= 0x3F;
     uint64_t v = ((uint64_t)a.hi << 32) | a.lo;
-    v <<= shift;
+    
+    // アドレス空間(0x80000000周り)の32bit符号拡張による hi=0xFFFFFFFF 汚染対策
+    if (a.hi == 0xFFFFFFFFU && (a.lo & 0x80000000U)) {
+        v = (uint64_t)a.lo; // 上位32bitの符号拡張を無効化して純粋な32bit値としてシフト
+    }
+    
+    v >>= shift;
     d->lo = (uint32_t)v;
     d->hi = (uint32_t)(v >> 32);
 }
 
-static inline void reg64_srl(reg64_t *d, reg64_t a, int shift) {
+static inline void reg64_sll(reg64_t *d, reg64_t a, int shift) {
     shift &= 0x3F;
     uint64_t v = ((uint64_t)a.hi << 32) | a.lo;
-    v >>= shift;
+    
+    if (a.hi == 0xFFFFFFFFU && (a.lo & 0x80000000U)) {
+        v = (uint64_t)a.lo;
+    }
+    
+    v <<= shift;
     d->lo = (uint32_t)v;
     d->hi = (uint32_t)(v >> 32);
 }
@@ -361,6 +372,9 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                     if (inst == 0x00000073) { // ecall
                         cpu->sepc = cpu->pc;
                         if (cpu->priv_mode == 0) { // User Mode
+                            uint32_t sys_num = cpu->x[17].lo; // a7 レジスタ (システムコール番号)
+                            printf("\n[SYS_CALL] num=%u (1=fork, 2=exit, 7=exec) at PC=0x%08X\n", sys_num, cpu->pc.lo);
+                            fflush(stdout);
                             cpu->scause.lo = 8;
                             cpu->scause.hi = 0;
                             

@@ -13,12 +13,12 @@
 #define RAM_SIZE (384 * 1024)
 #define RAM_BASE 0x80000000ULL
 
-static uint8_t guest_ram[RAM_SIZE];
+// decode_c.c から参照できるよう static を解除
+uint8_t guest_ram[RAM_SIZE];
 
 #include "kernel.bin.inc"
 
 RV64CPU *g_cpu = NULL;
-
 
 static inline uint8_t* paddr_to_host(uint32_t paddr) {
     if (paddr < RAM_BASE || paddr >= (RAM_BASE + RAM_SIZE)) {
@@ -74,6 +74,7 @@ reg64_t mem_read64_phys(uint32_t paddr) {
 }
 
 void mem_write8_phys(uint32_t paddr, uint8_t val) {
+    
     if (uart_is_addr(paddr)) { uart_write8(paddr, val); return; }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (host_ptr) *host_ptr = val;
@@ -262,8 +263,6 @@ int main(void) {
 
     while (!cpu.halted) {
         check_pending_interrupts(&cpu);
-
-        // ★ ループ内で毎回キーボード入力を判定
         uart_check_input();
 
         if ((inst_count & 0x3FF) == 0) {
