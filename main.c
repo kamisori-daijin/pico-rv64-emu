@@ -184,7 +184,7 @@ void check_pending_interrupts(RV64CPU *cpu) {
         // SEIP (Supervisor External Interrupt: bit 9)
         if (pending & (1U << 9)) {
             cpu->sepc = cpu->pc;
-            cpu->scause.lo = 0x80000009U; // Interrupt bit + Exception code 9
+            cpu->scause.lo = 9U;          
             cpu->scause.hi = 0x80000000U;
 
             uint64_t spie = (sstatus_val >> 1) & 1;

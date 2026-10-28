@@ -172,9 +172,6 @@ static inline void handle_queue_notify(void) {
     // ステータス 0 (成功)
     mem_write8_phys(status_paddr, 0);
 
-    // struct buf の b->disk をピンポイントで 0 にクリア
-    mem_write32_phys(data_paddr - 84, 0);
-
     // VirtIO used ring の更新
     uint32_t used_elem_addr = used_pa + 4 + (used_idx % 8) * 8;
     mem_write32_phys(used_elem_addr, (uint32_t)head_desc_idx);
