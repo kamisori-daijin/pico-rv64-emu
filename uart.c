@@ -20,7 +20,11 @@ uint8_t uart_read8(uint32_t paddr) {
             return c;
         }
         int c = getchar_timeout_us(0);
-        if (c != PICO_ERROR_TIMEOUT) return (uint8_t)c;
+        if (c != PICO_ERROR_TIMEOUT) {
+            // シリアル端末の \r (CR) を xv6 が扱う \n (LF) や CR としてそのまま渡す
+            if (c == '\r') c = '\n'; 
+            return (uint8_t)c;
+        }
         return 0;
     }
     if (offset == 5) { // LSR (Line Status Register)
@@ -28,6 +32,7 @@ uint8_t uart_read8(uint32_t paddr) {
         if (g_rx_char == -1) {
             int c = getchar_timeout_us(0);
             if (c != PICO_ERROR_TIMEOUT) {
+                if (c == '\r') c = '\n';
                 g_rx_char = c;
             }
         }

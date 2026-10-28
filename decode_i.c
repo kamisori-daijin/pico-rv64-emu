@@ -414,8 +414,8 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                         cpu->sstatus.lo = (uint32_t)sstatus_val;
                         cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
 
-                        printf("[DEBUG sret] Jumping to sepc=0x%08X, new priv_mode=%d, satp=0x%08X\n",
-                               cpu->sepc.lo, cpu->priv_mode, cpu->satp.lo);
+                        //printf("[DEBUG sret] Jumping to sepc=0x%08X, new priv_mode=%d, satp=0x%08X\n",
+                               //cpu->sepc.lo, cpu->priv_mode, cpu->satp.lo);
 
                         cpu->pc = cpu->sepc;
                         return;

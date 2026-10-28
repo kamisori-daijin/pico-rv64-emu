@@ -131,7 +131,7 @@ static inline void handle_queue_notify(void) {
         uint32_t status_paddr = status_paddr_reg.lo;
 
         if (req_type == 0) {
-            printf("[VIRTIO READ] sector=%llu, len=%u\n", sector, data_len);
+            //printf("[VIRTIO READ] sector=%llu, len=%u\n", sector, data_len);
             fflush(stdout);
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
@@ -153,7 +153,7 @@ static inline void handle_queue_notify(void) {
                 }
             }
         } else if (req_type == 1) {
-            printf("[VIRTIO WRITE] sector=%llu, len=%u\n", sector, data_len);
+            //printf("[VIRTIO WRITE] sector=%llu, len=%u\n", sector, data_len);
             fflush(stdout);
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
