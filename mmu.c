@@ -1,4 +1,3 @@
-
 #include "mmu.h"
 #include <stdio.h>
 
@@ -30,11 +29,11 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
     uint32_t page_offset = va_64 & 0xFFF;
 
     uint64_t ppn = satp_64 & 0x000FFFFFFFFFFFFULL;
-    uint32_t a = (uint32_t)(ppn << 12);
+    uint64_t a = ppn << 12; // ★ uint64_t で保持
 
     for (int i = 2; i >= 0; i--) {
-        uint32_t pte_addr = a + (vpn[i] * 8);
-        reg64_t pte_reg = mem_read64_phys(pte_addr);
+        uint64_t pte_addr = a + (vpn[i] * 8);
+        reg64_t pte_reg = mem_read64_phys((uint32_t)pte_addr);
         uint64_t pte = ((uint64_t)pte_reg.hi << 32) | pte_reg.lo;
 
         // V ビット判定
@@ -51,12 +50,21 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
             return false;
         }
 
-        // ★ リーフエントリ (r || x) に到達したときのみ保護判定とアドレス計算を行う
+        // リーフエントリ (r || x) 到達時のアクセス権限検証
         if (r || x) {
             // Uモードでの Kernel ページアクセス保護チェック
             if (cpu->priv_mode == 0 && !u) {
                 return false;
             }
+            // Sモードでの User ページアクセス判定 (SUMビット無視の基本チェック)
+            if (cpu->priv_mode == 1 && u) {
+                // 必要に応じて SUM チェックを追加可能
+            }
+
+            // アクセス種別ごとの権限確認
+            if (access == FETCH_EXEC && !x) return false;
+            if (access == FETCH_READ && !r) return false;
+            if (access == FETCH_WRITE && !w) return false;
 
             uint64_t pte_ppn = (pte >> 10) & 0x000FFFFFFFFFFFFULL;
 
@@ -75,7 +83,7 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
 
         // 中間テーブルポインタを辿る
         uint64_t next_ppn = (pte >> 10) & 0x000FFFFFFFFFFFFULL;
-        a = (uint32_t)(next_ppn << 12);
+        a = next_ppn << 12; // ★ uint64_t で保持
     }
 
     return false;

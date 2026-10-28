@@ -41,14 +41,22 @@ static inline uint32_t get_va_hi(uint32_t vaddr) {
 uint8_t mem_read8_phys(uint32_t paddr) {
     if (uart_is_addr(paddr))   return uart_read8(paddr);
     uint8_t *host_ptr = paddr_to_host(paddr);
-    if (!host_ptr) return 0;
+    if (!host_ptr) {
+        printf("[PHYS READ FAULT 8] PA=0x%08X\n", paddr);
+        if (g_cpu) g_cpu->halted = true;
+        return 0;
+    }
     return *host_ptr;
 }
 
 uint16_t mem_read16_phys(uint32_t paddr) {
     if (uart_is_addr(paddr))   return (uint16_t)uart_read8(paddr);
     uint8_t *host_ptr = paddr_to_host(paddr);
-    if (!host_ptr) return 0;
+    if (!host_ptr) {
+        printf("[PHYS READ FAULT 16] PA=0x%08X\n", paddr);
+        if (g_cpu) g_cpu->halted = true;
+        return 0;
+    }
     uint16_t val;
     __builtin_memcpy(&val, host_ptr, sizeof(val));
     return val;
@@ -60,7 +68,11 @@ uint32_t mem_read32_phys(uint32_t paddr) {
     if (virtio_is_addr(paddr)) return virtio_read32(paddr);
     if (plic_is_addr(paddr))   return plic_read32(paddr);
     uint8_t *host_ptr = paddr_to_host(paddr);
-    if (!host_ptr) return 0;
+    if (!host_ptr) {
+        printf("[PHYS READ FAULT 32] PA=0x%08X\n", paddr);
+        if (g_cpu) g_cpu->halted = true;
+        return 0;
+    }
     uint32_t val;
     __builtin_memcpy(&val, host_ptr, sizeof(val));
     return val;
@@ -74,7 +86,6 @@ reg64_t mem_read64_phys(uint32_t paddr) {
 }
 
 void mem_write8_phys(uint32_t paddr, uint8_t val) {
-    
     if (uart_is_addr(paddr)) { uart_write8(paddr, val); return; }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (host_ptr) *host_ptr = val;
@@ -105,6 +116,32 @@ void mem_write64_phys(uint32_t paddr, reg64_t val) {
 // 2. MMU (仮想アドレス Sv39) 経由の公開メモリアクセス関数群
 // ============================================================================
 
+// --- 命令フェッチ専用関数 (FETCH_EXEC) ---
+uint16_t mem_fetch16(uint32_t vaddr) {
+    uint32_t paddr = vaddr;
+    uint32_t va_hi = get_va_hi(vaddr);
+    if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_EXEC, &paddr)) {
+        return mem_read16_phys(paddr);
+    }
+    printf("[FETCH FAULT 16] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
+    fflush(stdout);
+    g_cpu->halted = true;
+    return 0;
+}
+
+uint32_t mem_fetch32(uint32_t vaddr) {
+    uint32_t paddr = vaddr;
+    uint32_t va_hi = get_va_hi(vaddr);
+    if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_EXEC, &paddr)) {
+        return mem_read32_phys(paddr);
+    }
+    printf("[FETCH FAULT 32] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
+    fflush(stdout);
+    g_cpu->halted = true;
+    return 0;
+}
+
+// --- 通常データ読み出し関数 (FETCH_READ) ---
 uint8_t mem_read8(uint32_t vaddr) {
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
@@ -148,6 +185,7 @@ reg64_t mem_read64(uint32_t vaddr) {
     return val;
 }
 
+// --- 通常データ書き込み関数 (FETCH_WRITE) ---
 void mem_write8(uint32_t vaddr, uint8_t val) {
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
@@ -270,7 +308,8 @@ int main(void) {
         }
 
         uint32_t vaddr = cpu.pc.lo;
-        uint16_t half = mem_read16(vaddr);
+        // ★ 命令フェッチには mem_fetch16 を使用
+        uint16_t half = mem_fetch16(vaddr);
         if (cpu.halted) break;
 
         if ((half & 0x3) == 0x3) {
@@ -279,7 +318,8 @@ int main(void) {
                 cpu.halted = true;
                 break;
             }
-            uint32_t inst = mem_read32(vaddr);
+            // ★ 命令フェッチには mem_fetch32 を使用
+            uint32_t inst = mem_fetch32(vaddr);
             if (cpu.halted) break;
             execute_instruction(&cpu, inst);
         } else {
