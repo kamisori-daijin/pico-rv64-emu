@@ -11,8 +11,6 @@
 #define VIRTIO0_BASE 0x10001000ULL
 #define VIRTIO0_SIZE 0x100
 
-// Flash ROM 上の fs.img をロード（無ければダミー）
-#if __has_include("fs_img.inc")
 #include "fs_img.inc"
 #else
 static const unsigned char fs_img[] = {0};
@@ -110,74 +108,83 @@ static inline void handle_queue_notify(void) {
     uint16_t avail_idx = mem_read16_phys(avail_pa + 2);
     uint16_t used_idx  = mem_read16_phys(used_pa + 2);
 
-    uint32_t ring_elem_addr = avail_pa + 4 + ((avail_idx - 1) % 8) * 2;
-    uint16_t head_desc_idx  = mem_read16_phys(ring_elem_addr);
+    // ★ 未処理のリクエストをすべてループで処理する
+    while (used_idx != avail_idx) {
+        uint32_t ring_elem_addr = avail_pa + 4 + (used_idx % 8) * 2;
+        uint16_t head_desc_idx  = mem_read16_phys(ring_elem_addr);
 
-    // ディスクリプタ 0: virtio_blk_req
-    uint32_t d0_addr = desc_pa + head_desc_idx * 16;
-    reg64_t  req_header_paddr_reg = mem_read64_phys(d0_addr);
-    uint32_t req_header_paddr = req_header_paddr_reg.lo;
+        // ディスクリプタ 0: virtio_blk_req
+        uint32_t d0_addr = desc_pa + head_desc_idx * 16;
+        reg64_t  req_header_paddr_reg = mem_read64_phys(d0_addr);
+        uint32_t req_header_paddr = req_header_paddr_reg.lo;
 
-    uint32_t req_type   = mem_read32_phys(req_header_paddr);
-    reg64_t  sector_reg = mem_read64_phys(req_header_paddr + 8);
-    uint64_t sector     = ((uint64_t)sector_reg.hi << 32) | sector_reg.lo;
+        uint32_t req_type   = mem_read32_phys(req_header_paddr);
+        reg64_t  sector_reg = mem_read64_phys(req_header_paddr + 8);
+        uint64_t sector     = ((uint64_t)sector_reg.hi << 32) | sector_reg.lo;
 
-    // ディスクリプタ 1: データバッファ (b->data)
-    uint16_t d1_next = mem_read16_phys(d0_addr + 14);
-    uint32_t d1_addr = desc_pa + d1_next * 16;
-    reg64_t  data_paddr_reg = mem_read64_phys(d1_addr);
-    uint32_t data_paddr = data_paddr_reg.lo;
-    uint32_t data_len   = mem_read32_phys(d1_addr + 8);
+        // ディスクリプタ 1: データバッファ (b->data)
+        uint16_t d1_next = mem_read16_phys(d0_addr + 14);
+        uint32_t d1_addr = desc_pa + d1_next * 16;
+        reg64_t  data_paddr_reg = mem_read64_phys(d1_addr);
+        uint32_t data_paddr = data_paddr_reg.lo;
+        uint32_t data_len   = mem_read32_phys(d1_addr + 8);
 
-    // ディスクリプタ 2: status バイト
-    uint16_t d2_next = mem_read16_phys(d1_addr + 14);
-    uint32_t d2_addr = desc_pa + d2_next * 16;
-    reg64_t  status_paddr_reg = mem_read64_phys(d2_addr);
-    uint32_t status_paddr = status_paddr_reg.lo;
+        // ディスクリプタ 2: status バイト
+        uint16_t d2_next = mem_read16_phys(d1_addr + 14);
+        uint32_t d2_addr = desc_pa + d2_next * 16;
+        reg64_t  status_paddr_reg = mem_read64_phys(d2_addr);
+        uint32_t status_paddr = status_paddr_reg.lo;
 
-    // Read要求 (req_type == 0): Flash ROM + RAM差分キャッシュから読み込み
-    if (req_type == 0) {
-        for (uint32_t offset = 0; offset < data_len; offset += 512) {
-            uint64_t cur_sector = sector + (offset / 512);
-            uint8_t sector_buf[512];
+        // Read要求 (req_type == 0)
+        if (req_type == 0) {
+            printf("[VIRTIO READ] sector=%llu, len=%u\n", sector, data_len);
+            fflush(stdout);
+            for (uint32_t offset = 0; offset < data_len; offset += 512) {
+                uint64_t cur_sector = sector + (offset / 512);
+                uint8_t sector_buf[512];
 
-            uint64_t img_offset = cur_sector * 512;
-            for (int i = 0; i < 512; i++) {
-                if ((img_offset + i) < fs_img_len) {
-                    sector_buf[i] = fs_img[img_offset + i];
-                } else {
-                    sector_buf[i] = 0;
+                uint64_t img_offset = cur_sector * 512;
+                for (int i = 0; i < 512; i++) {
+                    if ((img_offset + i) < fs_img_len) {
+                        sector_buf[i] = fs_img[img_offset + i];
+                    } else {
+                        sector_buf[i] = 0;
+                    }
+                }
+
+                cache_read_sector(cur_sector, sector_buf);
+
+                for (int i = 0; i < 512; i++) {
+                    mem_write8_phys(data_paddr + offset + i, sector_buf[i]);
                 }
             }
-
-            cache_read_sector(cur_sector, sector_buf);
-
-            for (int i = 0; i < 512; i++) {
-                mem_write8_phys(data_paddr + offset + i, sector_buf[i]);
+        }
+        // Write要求 (req_type == 1)
+        else if (req_type == 1) {
+            printf("[VIRTIO WRITE] sector=%llu, len=%u\n", sector, data_len);
+            fflush(stdout);
+            for (uint32_t offset = 0; offset < data_len; offset += 512) {
+                uint64_t cur_sector = sector + (offset / 512);
+                uint8_t sector_buf[512];
+                for (int i = 0; i < 512; i++) {
+                    sector_buf[i] = mem_read8_phys(data_paddr + offset + i);
+                }
+                cache_write_sector(cur_sector, sector_buf);
             }
         }
-    } 
-    // Write要求 (req_type == 1): RAM差分キャッシュへ書き込み
-    else if (req_type == 1) {
-        for (uint32_t offset = 0; offset < data_len; offset += 512) {
-            uint64_t cur_sector = sector + (offset / 512);
-            uint8_t sector_buf[512];
-            for (int i = 0; i < 512; i++) {
-                sector_buf[i] = mem_read8_phys(data_paddr + offset + i);
-            }
-            cache_write_sector(cur_sector, sector_buf);
-        }
+
+        // ステータス 0 (成功)
+        mem_write8_phys(status_paddr, 0);
+
+        // VirtIO used ring の更新
+        uint32_t used_elem_addr = used_pa + 4 + (used_idx % 8) * 8;
+        mem_write32_phys(used_elem_addr, (uint32_t)head_desc_idx);
+        mem_write32_phys(used_elem_addr + 4, data_len);
+
+        used_idx++;
+        mem_write16_phys(used_pa + 2, used_idx);
     }
 
-    // ステータス 0 (成功)
-    mem_write8_phys(status_paddr, 0);
-
-    // VirtIO used ring の更新
-    uint32_t used_elem_addr = used_pa + 4 + (used_idx % 8) * 8;
-    mem_write32_phys(used_elem_addr, (uint32_t)head_desc_idx);
-    mem_write32_phys(used_elem_addr + 4, data_len);
-
-    mem_write16_phys(used_pa + 2, used_idx + 1);
     g_virtio_interrupt_status = 1;
 
     // PLIC 経由で CPU へ VirtIO 完了割り込み (IRQ 1 / SEIP) を通知
@@ -203,4 +210,3 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
     }
 }
 
-#endif
