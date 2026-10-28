@@ -10,5 +10,6 @@
 bool uart_is_addr(uint32_t paddr);
 uint8_t uart_read8(uint32_t paddr);
 void uart_write8(uint32_t paddr, uint8_t val);
+void uart_check_input(void);
 
 #endif

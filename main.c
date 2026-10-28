@@ -10,7 +10,6 @@
 #include "decode_c.h"
 #include "mmu.h"
 
-// xv6 PHYSTOP(384KB) に合わせて SRAM を最適化
 #define RAM_SIZE (384 * 1024)
 #define RAM_BASE 0x80000000ULL
 
@@ -19,6 +18,7 @@ static uint8_t guest_ram[RAM_SIZE];
 #include "kernel.bin.inc"
 
 RV64CPU *g_cpu = NULL;
+
 
 static inline uint8_t* paddr_to_host(uint32_t paddr) {
     if (paddr < RAM_BASE || paddr >= (RAM_BASE + RAM_SIZE)) {
@@ -263,6 +263,9 @@ int main(void) {
     while (!cpu.halted) {
         check_pending_interrupts(&cpu);
 
+        // ★ ループ内で毎回キーボード入力を判定
+        uart_check_input();
+
         if ((inst_count & 0x3FF) == 0) {
             clint_update_timer_interrupt(&cpu);
         }
@@ -285,12 +288,6 @@ int main(void) {
         }
         
         inst_count++;
-
-        if (inst_count % 1000000 == 0) {
-            //printf("[HEARTBEAT] Executed %lluM insts | PC=0x%08X | Mode=%d (0:U,1:S,3:M)\n",
-                   //inst_count / 1000000, cpu.pc.lo, cpu.priv_mode);
-            //fflush(stdout);
-        }
     }
 
     printf("CPU halted after executing %llu instructions.\n", inst_count);

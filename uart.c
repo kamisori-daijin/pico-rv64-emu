@@ -1,14 +1,34 @@
 #include "uart.h"
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "cpu.h"
 
 #define RV_UART0_BASE 0x10000000U
 #define RV_UART0_SIZE 0x100U
 
 static int g_rx_char = -1;
+extern uint32_t g_plic_uart_pending;
+extern RV64CPU *g_cpu;
 
 bool uart_is_addr(uint32_t paddr) {
     return (paddr >= RV_UART0_BASE && paddr < (RV_UART0_BASE + RV_UART0_SIZE));
+}
+
+// ★ キーボード入力をチェックし、入力があれば IRQ 10 を発火する関数
+void uart_check_input(void) {
+    if (g_rx_char == -1) {
+        int c = getchar_timeout_us(0);
+        if (c != PICO_ERROR_TIMEOUT) {
+            if (c == '\r') c = '\n'; // CR を LF に統一変換
+            g_rx_char = c;
+            
+            // 入力があったため PLIC と CPU に IRQ 10 (SEIP) を通知
+            g_plic_uart_pending = 1;
+            if (g_cpu) {
+                g_cpu->mip.lo |= (1U << 9); // SEIP (Bit 9) を立てる
+            }
+        }
+    }
 }
 
 uint8_t uart_read8(uint32_t paddr) {
@@ -21,21 +41,14 @@ uint8_t uart_read8(uint32_t paddr) {
         }
         int c = getchar_timeout_us(0);
         if (c != PICO_ERROR_TIMEOUT) {
-            // シリアル端末の \r (CR) を xv6 が扱う \n (LF) や CR としてそのまま渡す
-            if (c == '\r') c = '\n'; 
+            if (c == '\r') c = '\n';
             return (uint8_t)c;
         }
         return 0;
     }
     if (offset == 5) { // LSR (Line Status Register)
-        uint8_t lsr = 0x60; // Bit 5: THR Empty, Bit 6: TEMT (送信可能)
-        if (g_rx_char == -1) {
-            int c = getchar_timeout_us(0);
-            if (c != PICO_ERROR_TIMEOUT) {
-                if (c == '\r') c = '\n';
-                g_rx_char = c;
-            }
-        }
+        uint8_t lsr = 0x60; // Bit 5: THR Empty, Bit 6: TEMT
+        uart_check_input();
         if (g_rx_char != -1) {
             lsr |= 0x01; // Bit 0: Data Ready
         }

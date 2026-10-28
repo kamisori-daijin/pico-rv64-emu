@@ -69,6 +69,7 @@ static uint32_t g_device_desc_low = 0;
 static uint32_t g_virtio_interrupt_status = 0;
 
 extern RV64CPU *g_cpu;
+extern uint32_t g_plic_uart_pending;
 extern uint8_t  mem_read8_phys(uint32_t paddr);
 extern void     mem_write8_phys(uint32_t paddr, uint8_t val);
 extern uint16_t mem_read16_phys(uint32_t paddr);
@@ -131,8 +132,6 @@ static inline void handle_queue_notify(void) {
         uint32_t status_paddr = status_paddr_reg.lo;
 
         if (req_type == 0) {
-            //printf("[VIRTIO READ] sector=%llu, len=%u\n", sector, data_len);
-            fflush(stdout);
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
                 uint8_t sector_buf[512];
@@ -153,8 +152,6 @@ static inline void handle_queue_notify(void) {
                 }
             }
         } else if (req_type == 1) {
-            //printf("[VIRTIO WRITE] sector=%llu, len=%u\n", sector, data_len);
-            fflush(stdout);
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
                 uint8_t sector_buf[512];
@@ -194,7 +191,8 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
             g_virtio_interrupt_status &= ~val;
             if (g_virtio_interrupt_status == 0) {
                 g_plic_virtio_pending = 0;
-                if (g_cpu) {
+                // ★ UART 割り込みも残っていなければ SEIP をクリア
+                if (g_cpu && !g_plic_uart_pending) {
                     g_cpu->mip.lo &= ~(1U << 9);
                 }
             }
@@ -206,3 +204,4 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
         default: break;
     }
 }
+
