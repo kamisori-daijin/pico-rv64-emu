@@ -17,7 +17,6 @@ static const unsigned char fs_img[] = {0};
 static const unsigned int fs_img_len = 0;
 #endif
 
-// ディスク書き込み差分キャッシュ (SRAM 32KB 使用)
 #define CACHE_SECTORS 64
 typedef struct {
     uint64_t sector;
@@ -108,12 +107,10 @@ static inline void handle_queue_notify(void) {
     uint16_t avail_idx = mem_read16_phys(avail_pa + 2);
     uint16_t used_idx  = mem_read16_phys(used_pa + 2);
 
-    // ★ 未処理のリクエストをすべてループで処理する
     while (used_idx != avail_idx) {
         uint32_t ring_elem_addr = avail_pa + 4 + (used_idx % 8) * 2;
         uint16_t head_desc_idx  = mem_read16_phys(ring_elem_addr);
 
-        // ディスクリプタ 0: virtio_blk_req
         uint32_t d0_addr = desc_pa + head_desc_idx * 16;
         reg64_t  req_header_paddr_reg = mem_read64_phys(d0_addr);
         uint32_t req_header_paddr = req_header_paddr_reg.lo;
@@ -122,20 +119,17 @@ static inline void handle_queue_notify(void) {
         reg64_t  sector_reg = mem_read64_phys(req_header_paddr + 8);
         uint64_t sector     = ((uint64_t)sector_reg.hi << 32) | sector_reg.lo;
 
-        // ディスクリプタ 1: データバッファ (b->data)
         uint16_t d1_next = mem_read16_phys(d0_addr + 14);
         uint32_t d1_addr = desc_pa + d1_next * 16;
         reg64_t  data_paddr_reg = mem_read64_phys(d1_addr);
         uint32_t data_paddr = data_paddr_reg.lo;
         uint32_t data_len   = mem_read32_phys(d1_addr + 8);
 
-        // ディスクリプタ 2: status バイト
         uint16_t d2_next = mem_read16_phys(d1_addr + 14);
         uint32_t d2_addr = desc_pa + d2_next * 16;
         reg64_t  status_paddr_reg = mem_read64_phys(d2_addr);
         uint32_t status_paddr = status_paddr_reg.lo;
 
-        // Read要求 (req_type == 0)
         if (req_type == 0) {
             printf("[VIRTIO READ] sector=%llu, len=%u\n", sector, data_len);
             fflush(stdout);
@@ -158,9 +152,7 @@ static inline void handle_queue_notify(void) {
                     mem_write8_phys(data_paddr + offset + i, sector_buf[i]);
                 }
             }
-        }
-        // Write要求 (req_type == 1)
-        else if (req_type == 1) {
+        } else if (req_type == 1) {
             printf("[VIRTIO WRITE] sector=%llu, len=%u\n", sector, data_len);
             fflush(stdout);
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
@@ -173,10 +165,8 @@ static inline void handle_queue_notify(void) {
             }
         }
 
-        // ステータス 0 (成功)
         mem_write8_phys(status_paddr, 0);
 
-        // VirtIO used ring の更新
         uint32_t used_elem_addr = used_pa + 4 + (used_idx % 8) * 8;
         mem_write32_phys(used_elem_addr, (uint32_t)head_desc_idx);
         mem_write32_phys(used_elem_addr + 4, data_len);
@@ -187,10 +177,9 @@ static inline void handle_queue_notify(void) {
 
     g_virtio_interrupt_status = 1;
 
-    // PLIC 経由で CPU へ VirtIO 完了割り込み (IRQ 1 / SEIP) を通知
     g_plic_virtio_pending = 1;
     if (g_cpu) {
-        g_cpu->mip.lo |= (1U << 9); // SEIP (Bit 9)
+        g_cpu->mip.lo |= (1U << 9); // SEIP
     }
 }
 
@@ -201,7 +190,15 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
         case 0x038: g_virtio_queue_num = val; break;
         case 0x044: g_virtio_queue_ready = val; break;
         case 0x050: handle_queue_notify(); break;
-        case 0x064: g_virtio_interrupt_status &= ~val; break;
+        case 0x064: 
+            g_virtio_interrupt_status &= ~val;
+            if (g_virtio_interrupt_status == 0) {
+                g_plic_virtio_pending = 0;
+                if (g_cpu) {
+                    g_cpu->mip.lo &= ~(1U << 9);
+                }
+            }
+            break;
         case 0x070: g_virtio_status = val; break;
         case 0x080: g_queue_desc_low = val; break;
         case 0x090: g_driver_desc_low = val; break;
@@ -209,4 +206,3 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
         default: break;
     }
 }
-

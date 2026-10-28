@@ -110,6 +110,9 @@ uint8_t mem_read8(uint32_t vaddr) {
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read8_phys(paddr);
     }
+    printf("[READ FAULT 8] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
+    fflush(stdout);
+    g_cpu->halted = true;
     return 0;
 }
 
@@ -119,6 +122,9 @@ uint16_t mem_read16(uint32_t vaddr) {
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read16_phys(paddr);
     }
+    printf("[READ FAULT 16] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
+    fflush(stdout);
+    g_cpu->halted = true;
     return 0;
 }
 
@@ -128,8 +134,9 @@ uint32_t mem_read32(uint32_t vaddr) {
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read32_phys(paddr);
     }
-    printf("[READ FAULT] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
+    printf("[READ FAULT 32] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
     fflush(stdout);
+    g_cpu->halted = true;
     return 0;
 }
 
@@ -145,7 +152,11 @@ void mem_write8(uint32_t vaddr, uint8_t val) {
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
         mem_write8_phys(paddr, val);
+        return;
     }
+    printf("[WRITE FAULT 8] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
+    fflush(stdout);
+    g_cpu->halted = true;
 }
 
 void mem_write16(uint32_t vaddr, uint16_t val) {
@@ -153,7 +164,11 @@ void mem_write16(uint32_t vaddr, uint16_t val) {
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
         mem_write16_phys(paddr, val);
+        return;
     }
+    printf("[WRITE FAULT 16] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
+    fflush(stdout);
+    g_cpu->halted = true;
 }
 
 void mem_write32(uint32_t vaddr, uint32_t val) {
@@ -163,8 +178,9 @@ void mem_write32(uint32_t vaddr, uint32_t val) {
         mem_write32_phys(paddr, val);
         return;
     }
-    printf("[WRITE FAULT] VA=0x%08X, Val=0x%08X at PC=0x%08X\n", vaddr, val, g_cpu->pc.lo);
+    printf("[WRITE FAULT 32] VA=0x%08X, Val=0x%08X at PC=0x%08X\n", vaddr, val, g_cpu->pc.lo);
     fflush(stdout);
+    g_cpu->halted = true;
 }
 
 void mem_write64(uint32_t vaddr, reg64_t val) {
@@ -177,7 +193,6 @@ void check_pending_interrupts(RV64CPU *cpu) {
     uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
     bool sie_enabled = (sstatus_val & (1ULL << 1)) != 0;
 
-    // Uモード時、または Sモードかつ SIE=1 の場合に割り込みを処理
     if (cpu->priv_mode == 0 || (cpu->priv_mode == 1 && sie_enabled)) {
         uint32_t pending = cpu->mip.lo & cpu->sie.lo;
 
@@ -246,16 +261,15 @@ int main(void) {
     unsigned long long inst_count = 0;
 
     while (!cpu.halted) {
-        // ★ 割り込みトラップの判定
         check_pending_interrupts(&cpu);
 
-        // 1000命令ごとにタイマー割り込みフラグをチェック更新
         if ((inst_count & 0x3FF) == 0) {
             clint_update_timer_interrupt(&cpu);
         }
 
         uint32_t vaddr = cpu.pc.lo;
         uint16_t half = mem_read16(vaddr);
+        if (cpu.halted) break;
 
         if ((half & 0x3) == 0x3) {
             if (vaddr % 2 != 0) {
@@ -264,6 +278,7 @@ int main(void) {
                 break;
             }
             uint32_t inst = mem_read32(vaddr);
+            if (cpu.halted) break;
             execute_instruction(&cpu, inst);
         } else {
             execute_compressed_instruction(&cpu, half);

@@ -34,6 +34,19 @@ static inline void reg64_mul(reg64_t *d, reg64_t a, reg64_t b) {
     d->hi = (uint32_t)(res >> 32);
 }
 
+static inline void reg64_divs(reg64_t *d, reg64_t a, reg64_t b) {
+    int64_t va = (int64_t)(((uint64_t)a.hi << 32) | a.lo);
+    int64_t vb = (int64_t)(((uint64_t)b.hi << 32) | b.lo);
+    if (vb == 0) {
+        d->lo = 0xFFFFFFFF;
+        d->hi = 0xFFFFFFFF;
+    } else {
+        int64_t res = va / vb;
+        d->lo = (uint32_t)res;
+        d->hi = (uint32_t)((uint64_t)res >> 32);
+    }
+}
+
 static inline void reg64_divu(reg64_t *d, reg64_t a, reg64_t b) {
     uint64_t va = ((uint64_t)a.hi << 32) | a.lo;
     uint64_t vb = ((uint64_t)b.hi << 32) | b.lo;
@@ -44,6 +57,18 @@ static inline void reg64_divu(reg64_t *d, reg64_t a, reg64_t b) {
         uint64_t res = va / vb;
         d->lo = (uint32_t)res;
         d->hi = (uint32_t)(res >> 32);
+    }
+}
+
+static inline void reg64_rems(reg64_t *d, reg64_t a, reg64_t b) {
+    int64_t va = (int64_t)(((uint64_t)a.hi << 32) | a.lo);
+    int64_t vb = (int64_t)(((uint64_t)b.hi << 32) | b.lo);
+    if (vb == 0) {
+        *d = a;
+    } else {
+        int64_t res = va % vb;
+        d->lo = (uint32_t)res;
+        d->hi = (uint32_t)((uint64_t)res >> 32);
     }
 }
 
@@ -155,16 +180,18 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                     case 0x0: reg64_sub(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
                     case 0x5: reg64_sra(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2].lo); break;
                 }
-            } else if (funct7 == 0x01) {
+            } else if (funct7 == 0x01) { // M拡張 64-bit
                 switch (funct3) {
                     case 0x0: reg64_mul(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x4: reg64_divs(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
                     case 0x5: reg64_divu(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
+                    case 0x6: reg64_rems(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
                     case 0x7: reg64_remu(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
                 }
             }
             break;
 
-        case 0x3B:
+        case 0x3B: // OP-32
             {
                 uint32_t v1 = cpu->x[rs1].lo;
                 uint32_t v2 = cpu->x[rs2].lo;
@@ -176,6 +203,14 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 } else if (funct7 == 0x20) {
                     if (funct3 == 0x0) res32 = v1 - v2;
                     else if (funct3 == 0x5) res32 = (uint32_t)((int32_t)v1 >> (v2 & 0x1F));
+                } else if (funct7 == 0x01) { // M拡張 32-bit (MULW, DIVW, DIVUW, REMW, REMUW)
+                    switch (funct3) {
+                        case 0x0: res32 = (uint32_t)((int32_t)v1 * (int32_t)v2); break;
+                        case 0x4: res32 = (v2 == 0) ? 0xFFFFFFFF : (uint32_t)((int32_t)v1 / (int32_t)v2); break;
+                        case 0x5: res32 = (v2 == 0) ? 0xFFFFFFFF : (v1 / v2); break;
+                        case 0x6: res32 = (v2 == 0) ? v1 : (uint32_t)((int32_t)v1 % (int32_t)v2); break;
+                        case 0x7: res32 = (v2 == 0) ? v1 : (v1 % v2); break;
+                    }
                 }
                 reg64_sext32(&cpu->x[rd], res32);
             }
@@ -256,7 +291,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x6F:
+        case 0x6F: // jal
             {
                 int32_t offset = ((inst >> 31) & 0x1) << 20 |
                                  ((inst >> 21) & 0x3FF) << 1 |
@@ -275,7 +310,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x67:
+        case 0x67: // jalr
             {
                 reg64_t next_pc;
                 reg64_t pc_four = { .lo = 4, .hi = 0 };
@@ -293,7 +328,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x63:
+        case 0x63: // branch
             {
                 int32_t imm_b = ((inst >> 31) & 0x1) << 12 |
                                 ((inst >> 7) & 0x1) << 11 |
@@ -318,36 +353,35 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x73:
+        case 0x73: // SYSTEM
             {
                 uint32_t csr_addr = inst >> 20;
                 
                 if (funct3 == 0x0) {
-                    if (inst == 0x00000073) { // ★ ecall (システムコール発生)
-                        cpu->sepc = cpu->pc; // 現在の ecall の PC を保存
-                        if (cpu->priv_mode == 0) { // User Mode からの ecall
-                            cpu->scause.lo = 8; // Environment call from U-mode
+                    if (inst == 0x00000073) { // ecall
+                        cpu->sepc = cpu->pc;
+                        if (cpu->priv_mode == 0) { // User Mode
+                            cpu->scause.lo = 8;
                             cpu->scause.hi = 0;
                             
-                            // sstatus の SPP(ビット8), SPIE(ビット5), SIE(ビット1) を更新
                             uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
                             uint64_t sie = (sstatus_val >> 1) & 1;
-                            sstatus_val &= ~(1ULL << 8);                              // SPP = 0 (User Mode)
+                            sstatus_val &= ~(1ULL << 8);                              // SPP = 0
                             sstatus_val = (sstatus_val & ~(1ULL << 5)) | (sie << 5); // SPIE = SIE
                             sstatus_val &= ~(1ULL << 1);                              // SIE = 0
                             cpu->sstatus.lo = (uint32_t)sstatus_val;
                             cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
 
-                            cpu->priv_mode = 1; // Sモード (Supervisor Mode) に昇格
-                            cpu->pc.lo = cpu->stvec.lo & ~0x3U; // トラップハンドラ (stvec) へジャンプ
+                            cpu->priv_mode = 1; // Sモード
+                            cpu->pc.lo = cpu->stvec.lo & ~0x3U;
                             cpu->pc.hi = cpu->stvec.hi;
-                        } else { // Supervisor Mode からの ecall
-                            cpu->scause.lo = 9; // Environment call from S-mode
+                        } else { // Supervisor Mode
+                            cpu->scause.lo = 9;
                             cpu->scause.hi = 0;
                             
                             uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
                             uint64_t sie = (sstatus_val >> 1) & 1;
-                            sstatus_val |= (1ULL << 8);                               // SPP = 1 (Supervisor Mode)
+                            sstatus_val |= (1ULL << 8);                               // SPP = 1
                             sstatus_val = (sstatus_val & ~(1ULL << 5)) | (sie << 5); // SPIE = SIE
                             sstatus_val &= ~(1ULL << 1);                              // SIE = 0
                             cpu->sstatus.lo = (uint32_t)sstatus_val;
@@ -357,14 +391,14 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                             cpu->pc.lo = cpu->stvec.lo & ~0x3U;
                             cpu->pc.hi = cpu->stvec.hi;
                         }
-                        return; // ★ トラップ処理のため PC += 4 を行わずにリターン！
+                        return;
                     } else if (inst == 0x30200073) { // mret
                         uint64_t mstatus_val = ((uint64_t)cpu->mstatus.hi << 32) | cpu->mstatus.lo;
-                        cpu->priv_mode = (mstatus_val >> 11) & 0x3; // MPP
+                        cpu->priv_mode = (mstatus_val >> 11) & 0x3;
                         uint64_t mpie = (mstatus_val >> 7) & 1;
-                        mstatus_val = (mstatus_val & ~(1ULL << 3)) | (mpie << 3); // MIE = MPIE
-                        mstatus_val |= (1ULL << 7);                              // MPIE = 1
-                        mstatus_val &= ~(3ULL << 11);                            // MPP = 0 (User)
+                        mstatus_val = (mstatus_val & ~(1ULL << 3)) | (mpie << 3);
+                        mstatus_val |= (1ULL << 7);
+                        mstatus_val &= ~(3ULL << 11);
                         cpu->mstatus.lo = (uint32_t)mstatus_val;
                         cpu->mstatus.hi = (uint32_t)(mstatus_val >> 32);
 
@@ -372,7 +406,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                         return;
                     } else if (inst == 0x10200073) { // sret
                         uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
-                        cpu->priv_mode = (sstatus_val >> 8) & 0x1; // SPP (0: User, 1: Supervisor)
+                        cpu->priv_mode = (sstatus_val >> 8) & 0x1;
                         uint64_t spie = (sstatus_val >> 5) & 1;
                         sstatus_val = (sstatus_val & ~(1ULL << 1)) | (spie << 1);
                         sstatus_val |= (1ULL << 5);
@@ -532,7 +566,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             }
             break;
 
-        case 0x0F:
+        case 0x0F: // FENCE
             break;
 
         default:
