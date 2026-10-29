@@ -7,6 +7,8 @@
 #define RV_UART0_SIZE 0x100U
 
 static int g_rx_char = -1;
+static uint8_t g_uart_ier = 0; // ★ IER (Interrupt Enable Register) 
+
 extern uint32_t g_plic_uart_pending;
 extern RV64CPU *g_cpu;
 
@@ -45,6 +47,14 @@ uint8_t uart_read8(uint32_t paddr) {
         }
         return 0;
     }
+    if (offset == 1) { // IER
+        return g_uart_ier;
+    }
+    if (offset == 2) { // ISR / IIR (Interrupt Status Register)
+        if (g_rx_char != -1) return 0x04; // Received Data Available
+        if (g_uart_ier & 0x02) return 0x02; // THR Empty (TX Interrupt)
+        return 0x01; // No interrupt pending
+    }
     if (offset == 5) { // LSR (Line Status Register)
         uint8_t lsr = 0x60; // Bit 5: THR Empty, Bit 6: TEMT
         uart_check_input();
@@ -61,5 +71,18 @@ void uart_write8(uint32_t paddr, uint8_t val) {
     if (offset == 0) { // THR (Transmitter Holding Register)
         putchar((char)val);
         fflush(stdout);
+
+        if (g_uart_ier & 0x02) {
+            g_plic_uart_pending = 1;
+            if (g_cpu) {
+                g_cpu->mip.lo |= (1U << 9); // SEIP (Bit 9)
+            }
+        }
+    } else if (offset == 1) { // IER (Interrupt Enable Register)
+        g_uart_ier = (uint8_t)val;
+        if ((g_uart_ier & 0x02) && g_cpu) {
+            g_plic_uart_pending = 1;
+            g_cpu->mip.lo |= (1U << 9);
+        }
     }
 }

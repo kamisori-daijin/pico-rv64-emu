@@ -367,7 +367,7 @@ int main(void) {
     cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE);
     cpu.x[2].hi = 0x00000000;
 
-    printf("Starting CPU execution loop with MMU support...\n");
+    printf("Starting CPU execution loop ..\n");
     fflush(stdout);
 
     unsigned long long inst_count = 0;
