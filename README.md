@@ -75,38 +75,40 @@ The emulator will be automatically flashed onto the device using `picotool`.
 Connect to the USB serial console using a baud rate of `115200`. 
 ```text
 ========================================
-RV64 Emulator on RP2350 (RVC + MMU + UART)
+ RV64 Emulator on RP2350
 ========================================
-Kernel binary loaded successfully. Size: 31504 bytes
-Starting CPU execution loop with MMU support...
+Kernel binary loaded successfully. Size: 30816 bytes
+Starting CPU execution loop ..
 
 xv6 kernel is booting
 
 init: starting sh
 $ ls
-. 1 1 1024
+.              1 1 1024
 ..             1 1 1024
-README         2 2 2226
-cat            2 3 24232
-echo           2 4 23080
-forktest       2 5 13272
-grep           2 6 27560
-init           2 7 23600
-kill           2 8 23000
-ln             2 9 22960
-ls             2 10 26448
-mkdir          2 11 23120
-rm             2 12 23104
-sh             2 13 41968
-stressfs       2 14 24016
-usertests      2 15 148408
-grind          2 16 38160
-wc             2 17 25344
-zombie         2 18 22408
-console        3 19 0
-$ echo Hello from RP2350!
-Hello from RP2350!
-```
+README         2 2 2441
+cat            2 3 37360
+echo           2 4 36176
+forktest       2 5 17864
+grep           2 6 40872
+init           2 7 36520
+kill           2 8 36080
+ln             2 9 35880
+ls             2 10 39416
+mkdir          2 11 36136
+rm             2 12 36120
+sh             2 13 59696
+stressfs       2 14 36960
+usertests      2 15 204368
+grind          2 16 51992
+wc             2 17 38360
+zombie         2 18 35416
+logstress      2 19 38128
+forphan        2 20 36880
+dorphan        2 21 36336
+sync           2 22 35512
+console        3 23 0
+$```
 
 ---
 
