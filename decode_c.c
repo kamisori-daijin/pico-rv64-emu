@@ -1,8 +1,8 @@
 #include "decode_c.h"
-#include "mmu.h"     // ★ mmu_translate と FETCH_EXEC のために追加
+#include "mmu.h"
 #include <stdio.h>
 
-extern uint8_t guest_ram[]; // ★ main.c の RAM 配列を参照
+extern uint8_t guest_ram[];
 
 extern uint8_t  mem_read8(uint32_t paddr);
 extern uint16_t mem_read16(uint32_t paddr);
@@ -39,8 +39,11 @@ static inline void set_pc32(RV64CPU *cpu, uint32_t val) {
 }
 
 static inline void advance_pc2(RV64CPU *cpu) {
-    cpu->pc.lo += 2;
-    cpu->pc.hi = 0x00000000;
+    // ★ トラップ発生時は PC を進めない
+    if (!cpu->trap_raised) {
+        cpu->pc.lo += 2;
+        cpu->pc.hi = 0x00000000;
+    }
 }
 
 void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
@@ -195,7 +198,6 @@ void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
                         else if (sub_funct == 0x2) set_reg64(cpu, rd, v1 | v2);
                         else if (sub_funct == 0x3) set_reg64(cpu, rd, v1 & v2);
                     } else {
-                        // RV64 c.subw / c.addw
                         if (sub_funct == 0x0) set_reg64(cpu, rd, (int64_t)(int32_t)(v1 - v2));
                         else if (sub_funct == 0x1) set_reg64(cpu, rd, (int64_t)(int32_t)(v1 + v2));
                     }

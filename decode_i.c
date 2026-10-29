@@ -253,7 +253,6 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
         case 0x03:
             {
-                // 修正点: 符号なし加算でアドレスを計算
                 uint32_t vaddr = cpu->x[rs1].lo + (uint32_t)imm_i;
                 switch (funct3) {
                     case 0x0: reg64_from_imm32(&cpu->x[rd], (int32_t)(int8_t)mem_read8(vaddr)); break;
@@ -269,7 +268,6 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
         case 0x23:
             {
-                // 修正点: 符号なし加算でアドレスを計算
                 uint32_t vaddr = cpu->x[rs1].lo + (uint32_t)imm_s;
                 switch (funct3) {
                     case 0x0: mem_write8(vaddr, (uint8_t)cpu->x[rs2].lo); break;
@@ -574,6 +572,9 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             break;
     }
 
-    reg64_t four = { .lo = 4, .hi = 0 };
-    reg64_add(&cpu->pc, cpu->pc, four);
+    // ★ トラップが発生していない場合のみ PC を 4 進める
+    if (!cpu->trap_raised) {
+        reg64_t four = { .lo = 4, .hi = 0 };
+        reg64_add(&cpu->pc, cpu->pc, four);
+    }
 }

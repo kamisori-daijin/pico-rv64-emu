@@ -31,7 +31,7 @@ typedef struct {
     reg64_t mcounteren;
     reg64_t menvcfg;
     reg64_t stimecmp;
-    
+    bool trap_raised;
     uint32_t priv_mode;  // 0: User, 1: Supervisor, 3: Machine
     bool halted;         // wfi 等での停止フラグ
 } RV64CPU;

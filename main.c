@@ -26,7 +26,6 @@ static inline uint8_t* paddr_to_host(uint32_t paddr) {
     return &guest_ram[paddr - RAM_BASE];
 }
 
-// 修正: TRAMPOLINE / TRAPFRAME / KSTACK 領域 (0xFFFFF000 付近) の上位32bitは 0x0000003F が正解
 static inline uint32_t get_va_hi(uint32_t vaddr) {
     if ((vaddr & 0xF0000000U) == 0xF0000000U) {
         return 0x0000003F;
@@ -34,7 +33,6 @@ static inline uint32_t get_va_hi(uint32_t vaddr) {
     return 0x00000000;
 }
 
-// ユーザーモード等で MMU 変換失敗時に RISC-V の Page Fault Trap を発生させる関数
 static void handle_page_fault(uint32_t vaddr, uint32_t cause) {
     g_cpu->sepc = g_cpu->pc;
     g_cpu->stval.lo = vaddr;
@@ -44,8 +42,8 @@ static void handle_page_fault(uint32_t vaddr, uint32_t cause) {
 
     uint64_t sstatus_val = ((uint64_t)g_cpu->sstatus.hi << 32) | g_cpu->sstatus.lo;
     uint64_t sie = (sstatus_val >> 1) & 1;
-    sstatus_val &= ~(1ULL << 8);                              // SPP = 0 (User mode から来た)
-    if (g_cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);    // Supervisor mode からなら SPP = 1
+    sstatus_val &= ~(1ULL << 8);                              // SPP = 0
+    if (g_cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);    // SPP = 1
     sstatus_val = (sstatus_val & ~(1ULL << 5)) | (sie << 5); // SPIE = SIE
     sstatus_val &= ~(1ULL << 1);                              // SIE = 0
     g_cpu->sstatus.lo = (uint32_t)sstatus_val;
@@ -54,6 +52,8 @@ static void handle_page_fault(uint32_t vaddr, uint32_t cause) {
     g_cpu->priv_mode = 1; // Sモードへ移行
     g_cpu->pc.lo = g_cpu->stvec.lo & ~0x3U;
     g_cpu->pc.hi = g_cpu->stvec.hi;
+
+    g_cpu->trap_raised = true; // ★ トラップ発生フラグを立てる
 }
 
 // ============================================================================
@@ -357,9 +357,11 @@ int main(void) {
             clint_update_timer_interrupt(&cpu);
         }
 
+        cpu.trap_raised = false; // ★ 1命令ごとにクリア
+
         uint32_t vaddr = cpu.pc.lo;
         uint16_t half = mem_fetch16(vaddr);
-        if (cpu.halted) break;
+        if (cpu.halted || cpu.trap_raised) continue; // ★ トラップ発生時は再試行
 
         if ((half & 0x3) == 0x3) {
             if (vaddr % 2 != 0) {
@@ -368,7 +370,7 @@ int main(void) {
                 break;
             }
             uint16_t half_high = mem_fetch16(vaddr + 2);
-            if (cpu.halted) break;
+            if (cpu.halted || cpu.trap_raised) continue; // ★ トラップ発生時は再試行
 
             uint32_t inst = (uint32_t)half | ((uint32_t)half_high << 16);
             execute_instruction(&cpu, inst);
