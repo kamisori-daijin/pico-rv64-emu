@@ -253,7 +253,8 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
         case 0x03:
             {
-                uint32_t vaddr = (uint32_t)((int32_t)cpu->x[rs1].lo + imm_i);
+                // 修正点: 符号なし加算でアドレスを計算
+                uint32_t vaddr = cpu->x[rs1].lo + (uint32_t)imm_i;
                 switch (funct3) {
                     case 0x0: reg64_from_imm32(&cpu->x[rd], (int32_t)(int8_t)mem_read8(vaddr)); break;
                     case 0x1: reg64_from_imm32(&cpu->x[rd], (int32_t)(int16_t)mem_read16(vaddr)); break;
@@ -268,7 +269,8 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
 
         case 0x23:
             {
-                uint32_t vaddr = (uint32_t)((int32_t)cpu->x[rs1].lo + imm_s);
+                // 修正点: 符号なし加算でアドレスを計算
+                uint32_t vaddr = cpu->x[rs1].lo + (uint32_t)imm_s;
                 switch (funct3) {
                     case 0x0: mem_write8(vaddr, (uint8_t)cpu->x[rs2].lo); break;
                     case 0x1: mem_write16(vaddr, (uint16_t)cpu->x[rs2].lo); break;
@@ -413,9 +415,6 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                         sstatus_val &= ~(1ULL << 8);
                         cpu->sstatus.lo = (uint32_t)sstatus_val;
                         cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
-
-                        //printf("[DEBUG sret] Jumping to sepc=0x%08X, new priv_mode=%d, satp=0x%08X\n",
-                               //cpu->sepc.lo, cpu->priv_mode, cpu->satp.lo);
 
                         cpu->pc = cpu->sepc;
                         return;
