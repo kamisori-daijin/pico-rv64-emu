@@ -7,7 +7,7 @@ DIR_NAME="xv6-riscv"
 
 echo "=== 1. check directory ==="
 if [ ! -d "$DIR_NAME" ]; then
-    echo "リポジトリをクローンします..."
+    echo "Cloning..."
     git clone "$REPO_URL"
 else
     echo " ${DIR_NAME} already exits"
