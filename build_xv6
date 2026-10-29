@@ -1,0 +1,45 @@
+#!/bin/bash
+
+set -e
+
+REPO_URL="https://github.com/kamisori-daijin/xv6-riscv.git"
+DIR_NAME="xv6-riscv"
+
+echo "=== 1. Clone xv6 fork ==="
+if [ ! -d "$DIR_NAME" ]; then
+    git clone "$REPO_URL"
+else
+    echo "force update"
+    cd "$DIR_NAME"
+    git pull
+    cd ..
+fi
+
+cd "$DIR_NAME"
+
+echo "=== 2. build xv6 ==="
+make 
+make fs.img
+
+echo "=== 3. generate .inc ==="
+# convert fs.img
+if [ -f "fs.img" ]; then
+    xxd -i fs.img | sed 's/unsigned char/const unsigned char/' > fs_img.inc
+    echo "Created fs_img.inc"
+else
+    echo "fs.img is not found"
+    exit 1
+fi
+
+# convert kernel
+if [ -f "kernel" ]; then
+    xxd -i kernel/kernel | sed 's/unsigned char/const unsigned char/' > kernel.inc
+    echo "Generated kernel.inc"
+else
+    echo "Kernel is not found"
+    exit 1
+fi
+
+echo "=== complete ==="
+ls -l fs_img.inc kernel.inc
+
