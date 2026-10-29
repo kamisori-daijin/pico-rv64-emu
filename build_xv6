@@ -5,17 +5,16 @@ set -e
 REPO_URL="https://github.com/kamisori-daijin/xv6-riscv.git"
 DIR_NAME="xv6-riscv"
 
-echo "=== 1. Clone xv6 fork ==="
+echo "=== 1. check directory ==="
 if [ ! -d "$DIR_NAME" ]; then
+    echo "リポジトリをクローンします..."
     git clone "$REPO_URL"
 else
-    echo "force update"
-    cd "$DIR_NAME"
-    git pull
-    cd ..
+    echo " ${DIR_NAME} already exits"
 fi
 
 cd "$DIR_NAME"
+
 
 echo "=== 2. build xv6 ==="
 make 
@@ -32,11 +31,12 @@ else
 fi
 
 # convert kernel
-if [ -f "kernel" ]; then
-    xxd -i kernel/kernel | sed 's/unsigned char/const unsigned char/' > kernel.inc
+if [ -f "kernel/kernel" ]; then
+    riscv64-unknown-elf-objcopy -O binary kernel/kernel kernel.bin
+    xxd -i kernel.bin | sed 's/unsigned char/const unsigned char/' > kernel.inc
     echo "Generated kernel.inc"
 else
-    echo "Kernel is not found"
+    echo "Kernel is not found at kernel/kernel"
     exit 1
 fi
 
