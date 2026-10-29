@@ -70,9 +70,10 @@ The emulator will be automatically flashed onto the device using `picotool`.
 
 ---
 
-## 🖥️ Execution Example
+## Execution Example
 
-Connect to the USB serial console using a baud rate of `115200`. ```text
+Connect to the USB serial console using a baud rate of `115200`. 
+```text
 ========================================
 RV64 Emulator on RP2350 (RVC + MMU + UART)
 ========================================

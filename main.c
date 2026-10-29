@@ -286,6 +286,7 @@ void check_pending_interrupts(RV64CPU *cpu) {
     if (cpu->priv_mode == 0 || (cpu->priv_mode == 1 && sie_enabled)) {
         uint32_t pending = cpu->mip.lo & cpu->sie.lo;
 
+        // 1. SEIP (Supervisor External Interrupt: bit 9)
         if (pending & (1U << 9)) {
             cpu->sepc = cpu->pc;
             cpu->scause.lo = 9U;          
@@ -302,6 +303,27 @@ void check_pending_interrupts(RV64CPU *cpu) {
             cpu->priv_mode = 1;
             cpu->pc.lo = cpu->stvec.lo & ~0x3U;
             cpu->pc.hi = cpu->stvec.hi;
+            return;
+        }
+
+        // 2. STIP (Supervisor Timer Interrupt: bit 5) 
+        if (pending & (1U << 5)) {
+            cpu->sepc = cpu->pc;
+            cpu->scause.lo = 5U;          // 5: Supervisor timer interrupt
+            cpu->scause.hi = 0x80000000U; // Interruput flag (Bit 31)
+
+            uint64_t spie = (sstatus_val >> 1) & 1;
+            sstatus_val &= ~(1ULL << 8); // SPP
+            if (cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);
+            sstatus_val = (sstatus_val & ~(1ULL << 5)) | (spie << 5); // SPIE = SIE
+            sstatus_val &= ~(1ULL << 1); // SIE = 0
+            cpu->sstatus.lo = (uint32_t)sstatus_val;
+            cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
+
+            cpu->priv_mode = 1;
+            cpu->pc.lo = cpu->stvec.lo & ~0x3U;
+            cpu->pc.hi = cpu->stvec.hi;
+            return;
         }
     }
 }
@@ -313,6 +335,7 @@ void check_pending_interrupts(RV64CPU *cpu) {
 int main(void) {
     stdio_init_all();
     sleep_ms(2000);
+    setvbuf(stdout, NULL, _IONBF, 0);
 
     for (int i = 5; i > 0; i--) {
         printf("Waiting for serial terminal... %d seconds\n", i);
@@ -351,7 +374,13 @@ int main(void) {
 
     while (!cpu.halted) {
         check_pending_interrupts(&cpu);
-        uart_check_input();
+        if ((inst_count & 0xFF) == 0) {
+                uart_check_input();
+            }
+        
+        if ((inst_count & 0x3FF) == 0) {
+            clint_update_timer_interrupt(&cpu);
+        }
 
         if ((inst_count & 0x3FF) == 0) {
             clint_update_timer_interrupt(&cpu);

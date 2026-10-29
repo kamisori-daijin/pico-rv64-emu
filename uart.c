@@ -61,6 +61,5 @@ void uart_write8(uint32_t paddr, uint8_t val) {
     if (offset == 0) { // THR (Transmitter Holding Register)
         putchar((char)val);
         fflush(stdout);
-        sleep_us(10);
     }
 }

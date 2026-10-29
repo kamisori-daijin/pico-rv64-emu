@@ -38,8 +38,10 @@ void clint_write32(uint32_t paddr, uint32_t val) {
 void clint_update_timer_interrupt(RV64CPU *cpu) {
     uint64_t mtime = time_us_64();
     if (mtimecmp != 0 && mtime >= mtimecmp) {
-        cpu->mip.lo |= (1U << 7); // MTIP (Bit 7: Machine Timer Interrupt)
+        cpu->mip.lo |= (1U << 7); // MTIP (Bit 7)
+        cpu->mip.lo |= (1U << 5); // STIP (Bit 5: Supervisor Timer Interrupt) 
     } else {
         cpu->mip.lo &= ~(1U << 7);
+        cpu->mip.lo &= ~(1U << 5); 
     }
 }
