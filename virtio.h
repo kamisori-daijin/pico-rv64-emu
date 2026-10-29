@@ -17,7 +17,7 @@ static const unsigned char fs_img[] = {0};
 static const unsigned int fs_img_len = 0;
 #endif
 
-// ディスク書き込み差分キャッシュ (64 -> 256 セクタ = 128KB SRAM 使用)
+// Diff Cache (64 -> 256 Sector = 128KB SRAM Used)
 #define CACHE_SECTORS 128
 typedef struct {
     uint64_t sector;
@@ -28,14 +28,14 @@ typedef struct {
 static SectorCache g_sector_cache[CACHE_SECTORS];
 
 static inline void cache_write_sector(uint64_t sector, const uint8_t *src) {
-    // 既存のセクタがあれば更新
+    // Update
     for (int i = 0; i < CACHE_SECTORS; i++) {
         if (g_sector_cache[i].valid && g_sector_cache[i].sector == sector) {
             memcpy(g_sector_cache[i].data, src, 512);
             return;
         }
     }
-    // 空きスロットに新規追加
+    //Add empty slots
     for (int i = 0; i < CACHE_SECTORS; i++) {
         if (!g_sector_cache[i].valid) {
             g_sector_cache[i].sector = sector;
@@ -44,7 +44,7 @@ static inline void cache_write_sector(uint64_t sector, const uint8_t *src) {
             return;
         }
     }
-    // キャッシュ溢れ時の警告と追い出し処理
+    // delete 
     static int victim = 0;
     printf("[WARN] Sector cache full! Evicting sector %llu for %llu\n", g_sector_cache[victim].sector, sector);
     g_sector_cache[victim].sector = sector;
@@ -137,7 +137,7 @@ static inline void handle_queue_notify(void) {
         uint32_t status_paddr = status_paddr_reg.lo;
 
         if (req_type == 0) { // READ
-            printf("[VIRTIO READ] sector=%llu, len=%u, dst_pa=0x%08X\n", sector, data_len, data_paddr);
+            //printf("[VIRTIO READ] sector=%llu, len=%u, dst_pa=0x%08X\n", sector, data_len, data_paddr);
             fflush(stdout);
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);

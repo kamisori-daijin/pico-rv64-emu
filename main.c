@@ -49,15 +49,15 @@ static void handle_page_fault(uint32_t vaddr, uint32_t cause) {
     g_cpu->sstatus.lo = (uint32_t)sstatus_val;
     g_cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
 
-    g_cpu->priv_mode = 1; // Sモードへ移行
+    g_cpu->priv_mode = 1; // transfer to s mode
     g_cpu->pc.lo = g_cpu->stvec.lo & ~0x3U;
     g_cpu->pc.hi = g_cpu->stvec.hi;
 
-    g_cpu->trap_raised = true; // ★ トラップ発生フラグを立てる
+    g_cpu->trap_raised = true; // make trap flag
 }
 
 // ============================================================================
-// 1. 物理アドレス直引きメモリアクセス関数群 (_phys)
+// 1. Access to physical memory(_phys)
 // ============================================================================
 
 uint8_t mem_read8_phys(uint32_t paddr) {
@@ -135,7 +135,7 @@ void mem_write64_phys(uint32_t paddr, reg64_t val) {
 }
 
 // ============================================================================
-// 2. MMU (仮想アドレス Sv39) 経由の公開メモリアクセス関数群
+// 2. MMU (Sv39) Route public memory
 // ============================================================================
 
 uint16_t mem_fetch16(uint32_t vaddr) {
@@ -307,7 +307,7 @@ void check_pending_interrupts(RV64CPU *cpu) {
 }
 
 // ============================================================================
-// メイン関数 & エミュレーションループ
+// Main func and emu loop
 // ============================================================================
 
 int main(void) {
@@ -320,14 +320,14 @@ int main(void) {
     }
 
     printf("\n========================================\n");
-    printf(" RV64 Emulator on RP2350 (RVC + MMU + UART)\n");
+    printf(" RV64 Emulator on RP2350 \n");
     printf("========================================\n");
 
     RV64CPU cpu;
     memset(&cpu, 0, sizeof(RV64CPU));
     memset(guest_ram, 0, RAM_SIZE);
 
-    cpu.priv_mode = 3; // Mモードスタート
+    cpu.priv_mode = 3; // M Mode start
     g_cpu = &cpu;
 
     if (kernel_bin_len > RAM_SIZE) {
@@ -357,11 +357,11 @@ int main(void) {
             clint_update_timer_interrupt(&cpu);
         }
 
-        cpu.trap_raised = false; // ★ 1命令ごとにクリア
+        cpu.trap_raised = false; // Clear per one inst
 
         uint32_t vaddr = cpu.pc.lo;
         uint16_t half = mem_fetch16(vaddr);
-        if (cpu.halted || cpu.trap_raised) continue; // ★ トラップ発生時は再試行
+        if (cpu.halted || cpu.trap_raised) continue; // Retry when trap happened
 
         if ((half & 0x3) == 0x3) {
             if (vaddr % 2 != 0) {
@@ -370,7 +370,7 @@ int main(void) {
                 break;
             }
             uint16_t half_high = mem_fetch16(vaddr + 2);
-            if (cpu.halted || cpu.trap_raised) continue; // ★ トラップ発生時は再試行
+            if (cpu.halted || cpu.trap_raised) continue; // retry when trap happened
 
             uint32_t inst = (uint32_t)half | ((uint32_t)half_high << 16);
             execute_instruction(&cpu, inst);

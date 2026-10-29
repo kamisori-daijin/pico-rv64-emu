@@ -180,7 +180,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                     case 0x0: reg64_sub(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
                     case 0x5: reg64_sra(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2].lo); break;
                 }
-            } else if (funct7 == 0x01) { // M拡張 64-bit
+            } else if (funct7 == 0x01) { // M extention 64-bit
                 switch (funct3) {
                     case 0x0: reg64_mul(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
                     case 0x4: reg64_divs(&cpu->x[rd], cpu->x[rs1], cpu->x[rs2]); break;
@@ -203,7 +203,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                 } else if (funct7 == 0x20) {
                     if (funct3 == 0x0) res32 = v1 - v2;
                     else if (funct3 == 0x5) res32 = (uint32_t)((int32_t)v1 >> (v2 & 0x1F));
-                } else if (funct7 == 0x01) { // M拡張 32-bit (MULW, DIVW, DIVUW, REMW, REMUW)
+                } else if (funct7 == 0x01) { // M extention 32-bit (MULW, DIVW, DIVUW, REMW, REMUW)
                     switch (funct3) {
                         case 0x0: res32 = (uint32_t)((int32_t)v1 * (int32_t)v2); break;
                         case 0x4: res32 = (v2 == 0) ? 0xFFFFFFFF : (uint32_t)((int32_t)v1 / (int32_t)v2); break;
@@ -372,7 +372,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
                             cpu->sstatus.lo = (uint32_t)sstatus_val;
                             cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
 
-                            cpu->priv_mode = 1; // Sモード
+                            cpu->priv_mode = 1; // S Mode
                             cpu->pc.lo = cpu->stvec.lo & ~0x3U;
                             cpu->pc.hi = cpu->stvec.hi;
                         } else { // Supervisor Mode
@@ -572,7 +572,7 @@ void execute_instruction(RV64CPU *cpu, uint32_t inst) {
             break;
     }
 
-    // ★ トラップが発生していない場合のみ PC を 4 進める
+    // no trap, +4
     if (!cpu->trap_raised) {
         reg64_t four = { .lo = 4, .hi = 0 };
         reg64_add(&cpu->pc, cpu->pc, four);

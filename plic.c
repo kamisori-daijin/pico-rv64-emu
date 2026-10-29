@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 uint32_t g_plic_virtio_pending = 0;
-uint32_t g_plic_uart_pending   = 0; // ★ UART割り込みフラグ追加
+uint32_t g_plic_uart_pending   = 0; 
 extern RV64CPU *g_cpu;
 
 bool plic_is_addr(uint32_t paddr) {
@@ -11,13 +11,13 @@ bool plic_is_addr(uint32_t paddr) {
 
 uint32_t plic_read32(uint32_t paddr) {
     uint32_t offset = paddr - PLIC_BASE;
-    // S-mode Hart 0 Claim レジスタ
+    // S-mode Hart 0 Claim Register
     if (offset == 0x201004) {
-        // ★ UART (IRQ 10) の割込みを優先処理
+        // UART (IRQ 10) Interrupt
         if (g_plic_uart_pending) {
             g_plic_uart_pending = 0;
             if (g_cpu) {
-                // 他に VirtIO 割り込みが残っていなければ SEIP (Bit 9) をクリア
+                // Clear SEIP (Bit 9) if no other VirtIO interrupts remain
                 if (!g_plic_virtio_pending) {
                     g_cpu->mip.lo &= ~(1U << 9);
                 }
@@ -42,6 +42,6 @@ uint32_t plic_read32(uint32_t paddr) {
 void plic_write32(uint32_t paddr, uint32_t val, RV64CPU *cpu) {
     uint32_t offset = paddr - PLIC_BASE;
     if (offset == 0x201004) {
-        // Complete (完了通知)
+        // Complete 
     }
 }

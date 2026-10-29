@@ -14,18 +14,17 @@ bool uart_is_addr(uint32_t paddr) {
     return (paddr >= RV_UART0_BASE && paddr < (RV_UART0_BASE + RV_UART0_SIZE));
 }
 
-// ★ キーボード入力をチェックし、入力があれば IRQ 10 を発火する関数
 void uart_check_input(void) {
     if (g_rx_char == -1) {
         int c = getchar_timeout_us(0);
         if (c != PICO_ERROR_TIMEOUT) {
-            if (c == '\r') c = '\n'; // CR を LF に統一変換
+            if (c == '\r') c = '\n'; // CR to LF
             g_rx_char = c;
             
-            // 入力があったため PLIC と CPU に IRQ 10 (SEIP) を通知
+            // notify PLIC and CPU
             g_plic_uart_pending = 1;
             if (g_cpu) {
-                g_cpu->mip.lo |= (1U << 9); // SEIP (Bit 9) を立てる
+                g_cpu->mip.lo |= (1U << 9); // SEIP (Bit 9) 
             }
         }
     }

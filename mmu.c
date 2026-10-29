@@ -14,7 +14,7 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
     uint64_t satp_64 = ((uint64_t)cpu->satp.hi << 32) | cpu->satp.lo;
     uint32_t mode = (uint32_t)(satp_64 >> 60) & 0xF;
 
-    // Mモード または satp.MODE != 8 (Sv39無効) の場合は物理アドレス直引き
+    // In M-mode, or when satp.MODE != 8 (Sv39 enabled), physical addresses are accessed directly.
     if (cpu->priv_mode == 3 || mode != 8) {
         *pa_out = va_lo;
         return true;
@@ -29,14 +29,14 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
     uint32_t page_offset = va_64 & 0xFFF;
 
     uint64_t ppn = satp_64 & 0x000FFFFFFFFFFFFULL;
-    uint64_t a = ppn << 12; // ★ uint64_t で保持
+    uint64_t a = ppn << 12; // ★ uint64_t 
 
     for (int i = 2; i >= 0; i--) {
         uint64_t pte_addr = a + (vpn[i] * 8);
         reg64_t pte_reg = mem_read64_phys((uint32_t)pte_addr);
         uint64_t pte = ((uint64_t)pte_reg.hi << 32) | pte_reg.lo;
 
-        // V ビット判定
+        // V Bit 
         if ((pte & PTE_V) == 0) {
             return false;
         }
@@ -50,18 +50,18 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
             return false;
         }
 
-        // リーフエントリ (r || x) 到達時のアクセス権限検証
+        // Access permission verification upon reaching a leaf entry (r || x)
         if (r || x) {
-            // Uモードでの Kernel ページアクセス保護チェック
+            // Kernel page access protection check in U-mode
             if (cpu->priv_mode == 0 && !u) {
                 return false;
             }
-            // Sモードでの User ページアクセス判定 (SUMビット無視の基本チェック)
+            // User page access check in S-mode (basic check, ignoring the SUM bit)
             if (cpu->priv_mode == 1 && u) {
-                // 必要に応じて SUM チェックを追加可能
+                // SUM checks can be added as needed.
             }
 
-            // アクセス種別ごとの権限確認
+            // Permission verification by access type
             if (access == FETCH_EXEC && !x) return false;
             if (access == FETCH_READ && !r) return false;
             if (access == FETCH_WRITE && !w) return false;
@@ -81,9 +81,9 @@ bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType acce
             return true;
         }
 
-        // 中間テーブルポインタを辿る
+        // Mid table pointer
         uint64_t next_ppn = (pte >> 10) & 0x000FFFFFFFFFFFFULL;
-        a = next_ppn << 12; // ★ uint64_t で保持
+        a = next_ppn << 12; // ★ uint64_t 
     }
 
     return false;

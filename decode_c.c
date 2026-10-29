@@ -39,7 +39,7 @@ static inline void set_pc32(RV64CPU *cpu, uint32_t val) {
 }
 
 static inline void advance_pc2(RV64CPU *cpu) {
-    // ★ トラップ発生時は PC を進めない
+    // when trap happned, don't foward pc
     if (!cpu->trap_raised) {
         cpu->pc.lo += 2;
         cpu->pc.hi = 0x00000000;

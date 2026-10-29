@@ -12,7 +12,7 @@ bool clint_is_addr(uint32_t paddr);
 uint32_t clint_read32(uint32_t paddr);
 void clint_write32(uint32_t paddr, uint32_t val);
 
-// タイマー割り込みフラグ (MTIP) の更新関数
+// MITP Update func
 void clint_update_timer_interrupt(RV64CPU *cpu);
 
 #endif
