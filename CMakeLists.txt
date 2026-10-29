@@ -41,11 +41,4 @@ add_custom_target(flash
     DEPENDS rv64_emu
 )
 
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
-    COMMAND xxd -i ${CMAKE_CURRENT_SOURCE_DIR}/kernel.bin | sed 's/^unsigned char/const unsigned char/' > ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/kernel.bin
-)
-
-
 include_directories(${CMAKE_CURRENT_BINARY_DIR})

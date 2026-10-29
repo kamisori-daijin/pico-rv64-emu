@@ -33,8 +33,8 @@ fi
 # convert kernel
 if [ -f "kernel/kernel" ]; then
     riscv64-unknown-elf-objcopy -O binary kernel/kernel kernel.bin
-    xxd -i kernel.bin | sed 's/unsigned char/const unsigned char/' > kernel.inc
-    echo "Generated kernel.inc"
+    xxd -i kernel.bin | sed 's/unsigned char/const unsigned char/' > kernel.bin.inc
+    echo "Generated kernel.bin.inc"
 else
     echo "Kernel is not found at kernel/kernel"
     exit 1
@@ -42,4 +42,10 @@ fi
 
 echo "=== complete ==="
 ls -l fs_img.inc kernel.inc
+
+echo "copy to emulator foldor"
+cp fs_img.inc ../
+cp kernel.bin.inc ../
+cp kernel.bin ../
+echo "copied"
 
