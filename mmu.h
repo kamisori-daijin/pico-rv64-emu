@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "cpu.h"
+#include "pico.h"
 
 // Access type
 typedef enum {
@@ -14,6 +15,6 @@ typedef enum {
 
 // Function to translate a virtual address (VA) to a physical address (PA)
 // Returns: true on success, false on failure (e.g., due to a page fault)
-bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType access, uint32_t *pa_out);
+bool __not_in_flash_func(mmu_translate)(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType access, uint32_t *pa_out);
 
 #endif

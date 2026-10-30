@@ -19,6 +19,7 @@ add_executable(rv64_emu
     clint.c   
     mmu.c
     plic.c
+    tlb.c
     ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
 )
 

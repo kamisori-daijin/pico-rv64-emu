@@ -10,7 +10,7 @@ extern reg64_t  mem_read64_phys(uint32_t paddr);
 #define PTE_X (1U << 3)
 #define PTE_U (1U << 4)
 
-bool mmu_translate(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType access, uint32_t *pa_out) {
+bool __not_in_flash_func(mmu_translate)(RV64CPU *cpu, uint32_t va_lo, uint32_t va_hi, AccessType access, uint32_t *pa_out) {
     uint64_t satp_64 = ((uint64_t)cpu->satp.hi << 32) | cpu->satp.lo;
     uint32_t mode = (uint32_t)(satp_64 >> 60) & 0xF;
 

@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include "pico/stdlib.h"
+#include "pico.h"
 #include "hardware/clocks.h"
 #include "cpu.h"
 #include "uart.h"
@@ -10,6 +11,7 @@
 #include "virtio.h"
 #include "decode_c.h"
 #include "mmu.h"
+#include "tlb.h"
 
 #define RAM_SIZE (416 * 1024)
 #define RAM_BASE 0x80000000ULL
@@ -20,11 +22,13 @@ uint8_t guest_ram[RAM_SIZE];
 
 RV64CPU *g_cpu = NULL;
 
+// 高速アドレス判定 (単一の無符号比較に最適化)
 static inline uint8_t* paddr_to_host(uint32_t paddr) {
-    if (paddr < RAM_BASE || paddr >= (RAM_BASE + RAM_SIZE)) {
-        return NULL;
+    uint32_t offset = paddr - RAM_BASE;
+    if (offset < RAM_SIZE) {
+        return &guest_ram[offset];
     }
-    return &guest_ram[paddr - RAM_BASE];
+    return NULL;
 }
 
 static inline uint32_t get_va_hi(uint32_t vaddr) {
@@ -38,31 +42,31 @@ static void handle_page_fault(uint32_t vaddr, uint32_t cause) {
     g_cpu->sepc = g_cpu->pc;
     g_cpu->stval.lo = vaddr;
     g_cpu->stval.hi = 0;
-    g_cpu->scause.lo = cause; // 12: Instruction, 13: Read, 15: Store/AMO
+    g_cpu->scause.lo = cause;
     g_cpu->scause.hi = 0;
 
     uint64_t sstatus_val = ((uint64_t)g_cpu->sstatus.hi << 32) | g_cpu->sstatus.lo;
     uint64_t sie = (sstatus_val >> 1) & 1;
-    sstatus_val &= ~(1ULL << 8);                              // SPP = 0
-    if (g_cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);    // SPP = 1
-    sstatus_val = (sstatus_val & ~(1ULL << 5)) | (sie << 5); // SPIE = SIE
-    sstatus_val &= ~(1ULL << 1);                              // SIE = 0
+    sstatus_val &= ~(1ULL << 8);
+    if (g_cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);
+    sstatus_val = (sstatus_val & ~(1ULL << 5)) | (sie << 5);
+    sstatus_val &= ~(1ULL << 1);
     g_cpu->sstatus.lo = (uint32_t)sstatus_val;
     g_cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
 
-    g_cpu->priv_mode = 1; // transfer to s mode
+    g_cpu->priv_mode = 1;
     g_cpu->pc.lo = g_cpu->stvec.lo & ~0x3U;
     g_cpu->pc.hi = g_cpu->stvec.hi;
 
-    g_cpu->trap_raised = true; // make trap flag
+    g_cpu->trap_raised = true;
 }
 
 // ============================================================================
-// 1. Access to physical memory(_phys)
+// 1. Access to physical memory(_phys) - SRAM常駐化
 // ============================================================================
 
-uint8_t mem_read8_phys(uint32_t paddr) {
-    if (uart_is_addr(paddr))   return uart_read8(paddr);
+uint8_t __not_in_flash_func(mem_read8_phys)(uint32_t paddr) {
+    if (uart_is_addr(paddr)) return uart_read8(paddr);
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) {
         printf("[PHYS READ FAULT 8] PA=0x%08X\n", paddr);
@@ -72,8 +76,8 @@ uint8_t mem_read8_phys(uint32_t paddr) {
     return *host_ptr;
 }
 
-uint16_t mem_read16_phys(uint32_t paddr) {
-    if (uart_is_addr(paddr))   return (uint16_t)uart_read8(paddr);
+uint16_t __not_in_flash_func(mem_read16_phys)(uint32_t paddr) {
+    if (uart_is_addr(paddr)) return (uint16_t)uart_read8(paddr);
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (!host_ptr) {
         printf("[PHYS READ FAULT 16] PA=0x%08X\n", paddr);
@@ -85,7 +89,7 @@ uint16_t mem_read16_phys(uint32_t paddr) {
     return val;
 }
 
-uint32_t mem_read32_phys(uint32_t paddr) {
+uint32_t __not_in_flash_func(mem_read32_phys)(uint32_t paddr) {
     if (uart_is_addr(paddr))   return (uint32_t)uart_read8(paddr);
     if (clint_is_addr(paddr))  return clint_read32(paddr);
     if (virtio_is_addr(paddr)) return virtio_read32(paddr);
@@ -101,26 +105,26 @@ uint32_t mem_read32_phys(uint32_t paddr) {
     return val;
 }
 
-reg64_t mem_read64_phys(uint32_t paddr) {
+reg64_t __not_in_flash_func(mem_read64_phys)(uint32_t paddr) {
     reg64_t val;
     val.lo = mem_read32_phys(paddr);
     val.hi = mem_read32_phys(paddr + 4U);
     return val;
 }
 
-void mem_write8_phys(uint32_t paddr, uint8_t val) {
+void __not_in_flash_func(mem_write8_phys)(uint32_t paddr, uint8_t val) {
     if (uart_is_addr(paddr)) { uart_write8(paddr, val); return; }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (host_ptr) *host_ptr = val;
 }
 
-void mem_write16_phys(uint32_t paddr, uint16_t val) {
+void __not_in_flash_func(mem_write16_phys)(uint32_t paddr, uint16_t val) {
     if (uart_is_addr(paddr)) { uart_write8(paddr, (uint8_t)(val & 0xFF)); return; }
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (host_ptr) __builtin_memcpy(host_ptr, &val, sizeof(val));
 }
 
-void mem_write32_phys(uint32_t paddr, uint32_t val) {
+void __not_in_flash_func(mem_write32_phys)(uint32_t paddr, uint32_t val) {
     if (uart_is_addr(paddr)) { uart_write8(paddr, (uint8_t)(val & 0xFF)); return; }
     if (clint_is_addr(paddr)) { clint_write32(paddr, val); return; }
     if (virtio_is_addr(paddr)) { virtio_write32(paddr, val); return; }
@@ -130,23 +134,23 @@ void mem_write32_phys(uint32_t paddr, uint32_t val) {
     if (host_ptr) __builtin_memcpy(host_ptr, &val, sizeof(val));
 }
 
-void mem_write64_phys(uint32_t paddr, reg64_t val) {
+void __not_in_flash_func(mem_write64_phys)(uint32_t paddr, reg64_t val) {
     mem_write32_phys(paddr, val.lo);
     mem_write32_phys(paddr + 4U, val.hi);
 }
 
 // ============================================================================
-// 2. MMU (Sv39) Route public memory
+// 2. MMU Route public memory - SRAM常駐化
 // ============================================================================
 
-uint16_t mem_fetch16(uint32_t vaddr) {
+uint16_t __not_in_flash_func(mem_fetch16)(uint32_t vaddr) {
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_EXEC, &paddr)) {
         return mem_read16_phys(paddr);
     }
     if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 12); // Instruction Page Fault
+        handle_page_fault(vaddr, 12);
         return 0;
     }
     printf("[FETCH FAULT 16] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
@@ -155,14 +159,14 @@ uint16_t mem_fetch16(uint32_t vaddr) {
     return 0;
 }
 
-uint32_t mem_fetch32(uint32_t vaddr) {
+uint32_t __not_in_flash_func(mem_fetch32)(uint32_t vaddr) {
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_EXEC, &paddr)) {
         return mem_read32_phys(paddr);
     }
     if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 12); // Instruction Page Fault
+        handle_page_fault(vaddr, 12);
         return 0;
     }
     printf("[FETCH FAULT 32] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
@@ -171,14 +175,14 @@ uint32_t mem_fetch32(uint32_t vaddr) {
     return 0;
 }
 
-uint8_t mem_read8(uint32_t vaddr) {
+uint8_t __not_in_flash_func(mem_read8)(uint32_t vaddr) {
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
         return mem_read8_phys(paddr);
     }
     if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 13); // Load Page Fault
+        handle_page_fault(vaddr, 13);
         return 0;
     }
     printf("[READ FAULT 8] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
@@ -187,7 +191,7 @@ uint8_t mem_read8(uint32_t vaddr) {
     return 0;
 }
 
-uint16_t mem_read16(uint32_t vaddr) {
+uint16_t __not_in_flash_func(mem_read16)(uint32_t vaddr) {
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
@@ -203,7 +207,7 @@ uint16_t mem_read16(uint32_t vaddr) {
     return 0;
 }
 
-uint32_t mem_read32(uint32_t vaddr) {
+uint32_t __not_in_flash_func(mem_read32)(uint32_t vaddr) {
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
@@ -219,14 +223,14 @@ uint32_t mem_read32(uint32_t vaddr) {
     return 0;
 }
 
-reg64_t mem_read64(uint32_t vaddr) {
+reg64_t __not_in_flash_func(mem_read64)(uint32_t vaddr) {
     reg64_t val;
     val.lo = mem_read32(vaddr);
     val.hi = mem_read32(vaddr + 4U);
     return val;
 }
 
-void mem_write8(uint32_t vaddr, uint8_t val) {
+void __not_in_flash_func(mem_write8)(uint32_t vaddr, uint8_t val) {
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
@@ -234,16 +238,15 @@ void mem_write8(uint32_t vaddr, uint8_t val) {
         return;
     }
     if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 15); // Store/AMO Page Fault
+        handle_page_fault(vaddr, 15);
         return;
     }
-    printf("[WRITE FAULT 8] VA=0x%08X at PC=0x%08X (priv=%d, ra=0x%08X, sp=0x%08X, a0=0x%08X)\n", 
-           vaddr, g_cpu->pc.lo, g_cpu->priv_mode, g_cpu->x[1].lo, g_cpu->x[2].lo, g_cpu->x[10].lo);
+    printf("[WRITE FAULT 8] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
     fflush(stdout);
     g_cpu->halted = true;
 }
 
-void mem_write16(uint32_t vaddr, uint16_t val) {
+void __not_in_flash_func(mem_write16)(uint32_t vaddr, uint16_t val) {
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
@@ -259,7 +262,7 @@ void mem_write16(uint32_t vaddr, uint16_t val) {
     g_cpu->halted = true;
 }
 
-void mem_write32(uint32_t vaddr, uint32_t val) {
+void __not_in_flash_func(mem_write32)(uint32_t vaddr, uint32_t val) {
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
@@ -275,29 +278,30 @@ void mem_write32(uint32_t vaddr, uint32_t val) {
     g_cpu->halted = true;
 }
 
-void mem_write64(uint32_t vaddr, reg64_t val) {
+void __not_in_flash_func(mem_write64)(uint32_t vaddr, reg64_t val) {
     mem_write32(vaddr, val.lo);
     mem_write32(vaddr + 4U, val.hi);
 }
 
-void check_pending_interrupts(RV64CPU *cpu) {
+// 割り込みチェックの超高速パス (割り込み非発生時は1命令で即脱出)
+void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
+    uint32_t pending = cpu->mip.lo & cpu->sie.lo;
+    if (!pending) return; // ★ Fast path
+
     uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
     bool sie_enabled = (sstatus_val & (1ULL << 1)) != 0;
 
     if (cpu->priv_mode == 0 || (cpu->priv_mode == 1 && sie_enabled)) {
-        uint32_t pending = cpu->mip.lo & cpu->sie.lo;
-
-        // 1. SEIP (Supervisor External Interrupt: bit 9)
-        if (pending & (1U << 9)) {
+        if (pending & (1U << 9)) { // SEIP
             cpu->sepc = cpu->pc;
             cpu->scause.lo = 9U;          
             cpu->scause.hi = 0x80000000U;
 
             uint64_t spie = (sstatus_val >> 1) & 1;
-            sstatus_val &= ~(1ULL << 8); // SPP
+            sstatus_val &= ~(1ULL << 8);
             if (cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);
-            sstatus_val = (sstatus_val & ~(1ULL << 5)) | (spie << 5); // SPIE = SIE
-            sstatus_val &= ~(1ULL << 1); // SIE = 0
+            sstatus_val = (sstatus_val & ~(1ULL << 5)) | (spie << 5);
+            sstatus_val &= ~(1ULL << 1);
             cpu->sstatus.lo = (uint32_t)sstatus_val;
             cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
 
@@ -307,17 +311,16 @@ void check_pending_interrupts(RV64CPU *cpu) {
             return;
         }
 
-        // 2. STIP (Supervisor Timer Interrupt: bit 5) 
-        if (pending & (1U << 5)) {
+        if (pending & (1U << 5)) { // STIP
             cpu->sepc = cpu->pc;
-            cpu->scause.lo = 5U;          // 5: Supervisor timer interrupt
-            cpu->scause.hi = 0x80000000U; // Interruput flag (Bit 31)
+            cpu->scause.lo = 5U;          
+            cpu->scause.hi = 0x80000000U;
 
             uint64_t spie = (sstatus_val >> 1) & 1;
-            sstatus_val &= ~(1ULL << 8); // SPP
+            sstatus_val &= ~(1ULL << 8);
             if (cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);
-            sstatus_val = (sstatus_val & ~(1ULL << 5)) | (spie << 5); // SPIE = SIE
-            sstatus_val &= ~(1ULL << 1); // SIE = 0
+            sstatus_val = (sstatus_val & ~(1ULL << 5)) | (spie << 5);
+            sstatus_val &= ~(1ULL << 1);
             cpu->sstatus.lo = (uint32_t)sstatus_val;
             cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
 
@@ -333,22 +336,16 @@ void check_pending_interrupts(RV64CPU *cpu) {
 // Main func and emu loop
 // ============================================================================
 
-
 int main(void) {
     set_sys_clock_khz(250000, true);
     stdio_init_all();
-    sleep_ms(2000);
+    sleep_ms(1000);
     setvbuf(stdout, NULL, _IONBF, 0);
+
     uint32_t sys_clk = clock_get_hz(clk_sys);
     printf("Actual System Clock: %lu Hz (%lu MHz)\n", sys_clk, sys_clk / 1000000);
-    for (int i = 5; i > 0; i--) {
-        printf("Waiting for serial terminal... %d seconds\n", i);
-        sleep_ms(1000);
-    }
 
-    printf("\n========================================\n");
-    printf(" RV64 Emulator on RP2350 \n");
-    printf("========================================\n");
+    tlb_init(); // ★ TLB初期化
 
     RV64CPU cpu;
     memset(&cpu, 0, sizeof(RV64CPU));
@@ -358,7 +355,7 @@ int main(void) {
     g_cpu = &cpu;
 
     if (kernel_bin_len > RAM_SIZE) {
-        printf("Error: Kernel binary is too large for guest RAM! (%u bytes)\n", (unsigned int)kernel_bin_len);
+        printf("Error: Kernel binary is too large for guest RAM!\n");
         return -1;
     }
 
@@ -367,7 +364,6 @@ int main(void) {
 
     cpu.pc.lo = (uint32_t)RAM_BASE;
     cpu.pc.hi = 0x00000000;
-    
     cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE);
     cpu.x[2].hi = 0x00000000;
 
@@ -378,23 +374,20 @@ int main(void) {
 
     while (!cpu.halted) {
         check_pending_interrupts(&cpu);
+
+        // 周辺機器の更新頻度を適正化 (UART: 256命令ごと, CLINT: 1024命令ごと)
         if ((inst_count & 0xFF) == 0) {
-                uart_check_input();
-            }
-        
+            uart_check_input();
+        }
         if ((inst_count & 0x3FF) == 0) {
             clint_update_timer_interrupt(&cpu);
         }
 
-        if ((inst_count & 0x3FF) == 0) {
-            clint_update_timer_interrupt(&cpu);
-        }
-
-        cpu.trap_raised = false; // Clear per one inst
+        cpu.trap_raised = false;
 
         uint32_t vaddr = cpu.pc.lo;
         uint16_t half = mem_fetch16(vaddr);
-        if (cpu.halted || cpu.trap_raised) continue; // Retry when trap happened
+        if (cpu.halted || cpu.trap_raised) continue;
 
         if ((half & 0x3) == 0x3) {
             if (vaddr % 2 != 0) {
@@ -403,7 +396,7 @@ int main(void) {
                 break;
             }
             uint16_t half_high = mem_fetch16(vaddr + 2);
-            if (cpu.halted || cpu.trap_raised) continue; // retry when trap happened
+            if (cpu.halted || cpu.trap_raised) continue;
 
             uint32_t inst = (uint32_t)half | ((uint32_t)half_high << 16);
             execute_instruction(&cpu, inst);
@@ -416,7 +409,7 @@ int main(void) {
 
     printf("CPU halted after executing %llu instructions.\n", inst_count);
     fflush(stdout);
-    
+
     while (1) {
         tight_loop_contents();
     }
