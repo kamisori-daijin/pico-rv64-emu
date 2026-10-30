@@ -401,8 +401,14 @@ int main(void) {
         if ((inst_count & 0x3FF) == 0) {
             uint64_t now = time_us_64();
             if (now - last_time >= 1000000) {
-                uint64_t delta = inst_count - last_inst;
-                printf("[PERF] Delta: %llu inst/s (Total: %llu)\n", delta, inst_count);
+                uint64_t delta_inst = inst_count - last_inst;
+                uint64_t delta_time_us = now - last_time; 
+
+               
+                uint64_t real_inst_per_sec = (delta_inst * 1000000ULL) / delta_time_us;
+
+                printf("[PERF] Delta: %llu inst/s (Total: %llu)\n", real_inst_per_sec, inst_count);
+                
                 last_time = now;
                 last_inst = inst_count;
             }
