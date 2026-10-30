@@ -1,7 +1,7 @@
 #include "cpu.h"
 #include <stdio.h>
 #include <stdbool.h>
-#include "pico.h" // ★ __not_in_flash_func 用
+#include "pico.h" 
 
 extern uint8_t  mem_read8(uint32_t paddr);
 extern uint16_t mem_read16(uint32_t paddr);
@@ -13,7 +13,7 @@ extern void mem_write16(uint32_t paddr, uint16_t val);
 extern void mem_write32(uint32_t paddr, uint32_t val);
 extern void mem_write64(uint32_t paddr, reg64_t val);
 
-// --- インライン補助関数群 ---
+
 static inline void reg64_add(reg64_t *d, reg64_t a, reg64_t b) {
     uint32_t lo = a.lo + b.lo;
     uint32_t carry = (lo < a.lo) ? 1 : 0;
@@ -138,14 +138,14 @@ static inline int32_t get_u_imm(uint32_t inst) {
 }
 
 // ============================================================================
-// Computed GOTOs + SRAM常駐化による超高速デコード関数
+// Computed GOTOs 
 // ============================================================================
 
 void __not_in_flash_func(execute_instruction)(RV64CPU *cpu, uint32_t inst) {
-    // RISC-V 32bit命令の opcode は下位 7bit (ビット2..6が主要インデックス: 0〜31)
+    // RISC-V 32bit inst opcode down 7bit (bit2..6: 0〜31)
     uint32_t op_idx = (inst >> 2) & 0x1F;
 
-    // Direct Threading ジャンプテーブル (32エントリ)
+    // Direct Threading jmp table (32entry)
     static const void *dispatch_table[32] = {
         [0x00] = &&op_load,     // 0x03: LOAD
         [0x03] = &&op_fence,    // 0x0F: FENCE
@@ -183,7 +183,7 @@ void __not_in_flash_func(execute_instruction)(RV64CPU *cpu, uint32_t inst) {
         goto op_unknown;
     }
 
-// --- 各命令の処理ラベル ---
+// -label---
 
 op_op: // 0x33
     if (funct7 == 0x00) {

@@ -370,21 +370,21 @@ int main(void) {
     fflush(stdout);
 
     unsigned long long inst_count = 0;
-    uint64_t last_time = time_us_64();
-    uint64_t last_inst = 0;
+    //uint64_t last_time = time_us_64();
+    //uint64_t last_inst = 0;
 
     while (!cpu.halted) {
         check_pending_interrupts(&cpu);
-        if ((inst_count & 0x3FF) == 0) {
-                    uint64_t now = time_us_64();
-                    if (now - last_time >= 1000000) {
-                        uint64_t delta = inst_count - last_inst;
-                        printf("[PERF] Delta: %llu inst/s (Total: %llu)\n", delta, inst_count);
-                        last_time = now;
-                        last_inst = inst_count;
-                        }
-                clint_update_timer_interrupt(&cpu);
-            }
+        //if ((inst_count & 0x3FF) == 0) {
+                    //uint64_t now = time_us_64();
+                    //if (now - last_time >= 1000000) {
+                        //uint64_t delta = inst_count - last_inst;
+                        //printf("[PERF] Delta: %llu inst/s (Total: %llu)\n", delta, inst_count);
+                        //last_time = now;
+                        //last_inst = inst_count;
+                        //}
+                //clint_update_timer_interrupt(&cpu);
+                //}
 
         // UART(Per 256 inst)
         if ((inst_count & 0xFF) == 0) {
