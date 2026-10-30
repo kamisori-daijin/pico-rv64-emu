@@ -413,31 +413,46 @@ int main(void) {
         if ((inst_count & 0xFF) == 0) {
             uart_check_input();
         }
-        if ((inst_count & 0x3FF) == 0) {
-            clint_update_timer_interrupt(&cpu);
-        }
 
         cpu.trap_raised = false;
 
         uint32_t vaddr = cpu.pc.lo;
-        uint16_t half = mem_fetch16(vaddr);
-        if (cpu.halted || cpu.trap_raised) continue;
+        uint32_t page_va = vaddr >> 12;
+        uint32_t offset = vaddr & 0xFFF;
 
-        if ((half & 0x3) == 0x3) {
-            if (vaddr % 2 != 0) {
-                printf("[ERROR] Misaligned instruction fetch! PC = 0x%08X\n", vaddr);
-                cpu.halted = true;
-                break;
+        // ★ 32bit一括フェッチ Fast-Path (同一ページ内 ＆ 0xFFC以下)
+        if (__builtin_expect(cpu.pc_host_ptr != NULL &&
+                             cpu.pc_page_va == page_va &&
+                             offset <= 4092, 1)) {
+            uint32_t inst;
+            __builtin_memcpy(&inst, cpu.pc_host_ptr + offset, sizeof(inst));
+
+            if ((inst & 0x3) == 0x3) {
+                execute_instruction(&cpu, inst);
+            } else {
+                execute_compressed_instruction(&cpu, (uint16_t)(inst & 0xFFFF));
             }
-            uint16_t half_high = mem_fetch16(vaddr + 2);
+        } else {
+            // ★ Slow-Path: 境界跨ぎ・キャッシュ未ヒット時は従来の安全16bit段階読み出し
+            uint16_t half = mem_fetch16(vaddr);
             if (cpu.halted || cpu.trap_raised) continue;
 
-            uint32_t inst = (uint32_t)half | ((uint32_t)half_high << 16);
-            execute_instruction(&cpu, inst);
-        } else {
-            execute_compressed_instruction(&cpu, half);
+            if ((half & 0x3) == 0x3) {
+                if (vaddr % 2 != 0) {
+                    printf("[ERROR] Misaligned instruction fetch! PC = 0x%08X\n", vaddr);
+                    cpu.halted = true;
+                    break;
+                }
+                uint16_t half_high = mem_fetch16(vaddr + 2);
+                if (cpu.halted || cpu.trap_raised) continue;
+
+                uint32_t inst = (uint32_t)half | ((uint32_t)half_high << 16);
+                execute_instruction(&cpu, inst);
+            } else {
+                execute_compressed_instruction(&cpu, half);
+            }
         }
-        
+
         inst_count++;
     }
 
