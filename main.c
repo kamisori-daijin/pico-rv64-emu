@@ -22,7 +22,6 @@ uint8_t guest_ram[RAM_SIZE];
 
 RV64CPU *g_cpu = NULL;
 
-// 高速アドレス判定 (単一の無符号比較に最適化)
 static inline uint8_t* paddr_to_host(uint32_t paddr) {
     uint32_t offset = paddr - RAM_BASE;
     if (offset < RAM_SIZE) {
@@ -62,7 +61,7 @@ static void handle_page_fault(uint32_t vaddr, uint32_t cause) {
 }
 
 // ============================================================================
-// 1. Access to physical memory(_phys) - SRAM常駐化
+// 1. Access to physical memory(_phys) 
 // ============================================================================
 
 uint8_t __not_in_flash_func(mem_read8_phys)(uint32_t paddr) {
@@ -140,7 +139,7 @@ void __not_in_flash_func(mem_write64_phys)(uint32_t paddr, reg64_t val) {
 }
 
 // ============================================================================
-// 2. MMU Route public memory - SRAM常駐化
+// 2. MMU Route public memory
 // ============================================================================
 
 uint16_t __not_in_flash_func(mem_fetch16)(uint32_t vaddr) {
@@ -283,7 +282,7 @@ void __not_in_flash_func(mem_write64)(uint32_t vaddr, reg64_t val) {
     mem_write32(vaddr + 4U, val.hi);
 }
 
-// 割り込みチェックの超高速パス (割り込み非発生時は1命令で即脱出)
+// one inst
 void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
     uint32_t pending = cpu->mip.lo & cpu->sie.lo;
     if (!pending) return; // ★ Fast path
@@ -345,7 +344,7 @@ int main(void) {
     uint32_t sys_clk = clock_get_hz(clk_sys);
     printf("Actual System Clock: %lu Hz (%lu MHz)\n", sys_clk, sys_clk / 1000000);
 
-    tlb_init(); // ★ TLB初期化
+    tlb_init(); // Init tlb
 
     RV64CPU cpu;
     memset(&cpu, 0, sizeof(RV64CPU));
@@ -371,11 +370,23 @@ int main(void) {
     fflush(stdout);
 
     unsigned long long inst_count = 0;
+    uint64_t last_time = time_us_64();
+    uint64_t last_inst = 0;
 
     while (!cpu.halted) {
         check_pending_interrupts(&cpu);
+        if ((inst_count & 0x3FF) == 0) {
+                    uint64_t now = time_us_64();
+                    if (now - last_time >= 1000000) {
+                        uint64_t delta = inst_count - last_inst;
+                        printf("[PERF] Delta: %llu inst/s (Total: %llu)\n", delta, inst_count);
+                        last_time = now;
+                        last_inst = inst_count;
+                        }
+                clint_update_timer_interrupt(&cpu);
+            }
 
-        // 周辺機器の更新頻度を適正化 (UART: 256命令ごと, CLINT: 1024命令ごと)
+        // UART(Per 256 inst)
         if ((inst_count & 0xFF) == 0) {
             uart_check_input();
         }

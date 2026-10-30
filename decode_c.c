@@ -46,7 +46,7 @@ static inline void advance_pc2(RV64CPU *cpu) {
     }
 }
 
-void execute_compressed_instruction(RV64CPU *cpu, uint16_t inst) {
+void __not_in_flash_func(execute_compressed_instruction)(RV64CPU *cpu, uint16_t inst) {
     uint32_t quadrant = inst & 0x3;
 
     switch (quadrant) {
