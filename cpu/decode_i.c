@@ -528,7 +528,8 @@ op_system: {
     uint32_t rd = (inst >> 7) & 0x1F, funct3 = (inst >> 12) & 0x07, rs1 = (inst >> 15) & 0x1F, csr_addr = inst >> 20;
     if (funct3 == 0x0) {
         if (inst == 0x00000073) { // ecall
-            cpu->pc_host_ptr = NULL; // 特権モード遷移時にキャッシュ無効化
+            cpu->pc_host_ptr = NULL;   // 特権モード遷移時にPCキャッシュクリア
+            cpu->data_host_ptr = NULL; // 特権モード遷移時にDataキャッシュクリア
             cpu->sepc = cpu->pc;
             uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
             uint64_t sie = (sstatus_val >> 1) & 1;
@@ -550,7 +551,8 @@ op_system: {
             cpu->pc.hi = 0;
             return;
         } else if (inst == 0x30200073) { // mret
-            cpu->pc_host_ptr = NULL; // 特権モード遷移時にキャッシュ無効化
+            cpu->pc_host_ptr = NULL;   // 特権モード遷移時にPCキャッシュクリア
+            cpu->data_host_ptr = NULL; // 特権モード遷移時にDataキャッシュクリア
             uint64_t mstatus_val = ((uint64_t)cpu->mstatus.hi << 32) | cpu->mstatus.lo;
             cpu->priv_mode = (mstatus_val >> 11) & 0x3;
             uint64_t mpie = (mstatus_val >> 7) & 1;
@@ -564,7 +566,8 @@ op_system: {
             cpu->pc.hi = 0;
             return;
         } else if (inst == 0x10200073) { // sret
-            cpu->pc_host_ptr = NULL; // 特権モード遷移時にキャッシュ無効化
+            cpu->pc_host_ptr = NULL;   // 特権モード遷移時にPCキャッシュクリア
+            cpu->data_host_ptr = NULL; // 特権モード遷移時にDataキャッシュクリア
             uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
             cpu->priv_mode = (sstatus_val >> 8) & 0x1;
             uint64_t spie = (sstatus_val >> 5) & 1;
@@ -583,7 +586,8 @@ op_system: {
             return;
         } else if (((inst >> 25) & 0x7F) == 0x09) { // sfence.vma
             tlb_flush();
-            cpu->pc_host_ptr = NULL; // TLB破棄と同時にキャッシュ破棄
+            cpu->pc_host_ptr = NULL;   // TLB破棄と同時にPCキャッシュ破棄
+            cpu->data_host_ptr = NULL; // TLB破棄と同時にDataキャッシュ破棄
             cpu->pc.lo += 4;
             cpu->pc.hi = 0;
             return;
@@ -620,10 +624,11 @@ op_system: {
         
         reg64_t new_val = { .lo = (uint32_t)new_u64, .hi = (uint32_t)(new_u64 >> 32) };
         if (target_csr != NULL) *target_csr = new_val;
-        if (csr_addr == 0x180) { // satp 更新時に TLB と PC キャッシュをクリア
+        if (csr_addr == 0x180) { // satp 更新時に TLB と PC/Data キャッシュをクリア
             cpu->satp = new_val;
             tlb_flush();
             cpu->pc_host_ptr = NULL;
+            cpu->data_host_ptr = NULL;
         }
     }
     if (rd != 0) cpu->x[rd] = old_val;

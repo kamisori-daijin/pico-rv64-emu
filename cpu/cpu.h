@@ -11,11 +11,17 @@ typedef struct {
 } reg64_t;
 
 typedef struct {
-    reg64_t x[32];      // 64bit register(x0 is always 0)
-    reg64_t pc;         // 64program counter
-    uint32_t pc_page_va;    // Cache adress (vaddr >> 12)
-    uint8_t *pc_host_ptr;
+    reg64_t x[32];          // 64bit register(x0 is always 0)
+    reg64_t pc;             // 64program counter
     
+    // PC Fast-Path キャッシュ
+    uint32_t pc_page_va;    // Cache va (vaddr >> 12)
+    uint8_t *pc_host_ptr;
+
+    // Data Fast-Path キャッシュ
+    uint32_t data_page_va;  // Cache va (vaddr >> 12)
+    uint8_t *data_host_ptr;
+
     // CSR
     reg64_t satp;
     reg64_t sstatus;
