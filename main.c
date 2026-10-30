@@ -38,6 +38,7 @@ static inline uint32_t get_va_hi(uint32_t vaddr) {
 }
 
 static void handle_page_fault(uint32_t vaddr, uint32_t cause) {
+    g_cpu->pc_host_ptr = NULL; // トラップ時にPCキャッシュ破棄
     g_cpu->sepc = g_cpu->pc;
     g_cpu->stval.lo = vaddr;
     g_cpu->stval.hi = 0;
@@ -143,11 +144,31 @@ void __not_in_flash_func(mem_write64_phys)(uint32_t paddr, reg64_t val) {
 // ============================================================================
 
 uint16_t __not_in_flash_func(mem_fetch16)(uint32_t vaddr) {
+    uint32_t page_va = vaddr >> 12;
+    uint32_t offset = vaddr & 0xFFF;
+
+    // Fast-Path: 同一ページ内かつページ境界(0xFFE)を越えない場合
+    if (__builtin_expect(g_cpu->pc_host_ptr != NULL &&
+                         g_cpu->pc_page_va == page_va &&
+                         offset <= 4094, 1)) {
+        uint16_t val;
+        __builtin_memcpy(&val, g_cpu->pc_host_ptr + offset, sizeof(val));
+        return val;
+    }
+
+    // Slow-Path: MMU変換して該当ページの頭ポインタをキャッシュ
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_EXEC, &paddr)) {
+        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
+            g_cpu->pc_page_va = page_va;
+            g_cpu->pc_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
+        } else {
+            g_cpu->pc_host_ptr = NULL;
+        }
         return mem_read16_phys(paddr);
     }
+
     if (g_cpu->priv_mode == 0) {
         handle_page_fault(vaddr, 12);
         return 0;
@@ -285,13 +306,14 @@ void __not_in_flash_func(mem_write64)(uint32_t vaddr, reg64_t val) {
 // one inst
 void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
     uint32_t pending = cpu->mip.lo & cpu->sie.lo;
-    if (!pending) return; // ★ Fast path
+    if (!pending) return; // Fast path
 
     uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
     bool sie_enabled = (sstatus_val & (1ULL << 1)) != 0;
 
     if (cpu->priv_mode == 0 || (cpu->priv_mode == 1 && sie_enabled)) {
         if (pending & (1U << 9)) { // SEIP
+            cpu->pc_host_ptr = NULL; // 割り込み発生時にキャッシュ破棄
             cpu->sepc = cpu->pc;
             cpu->scause.lo = 9U;          
             cpu->scause.hi = 0x80000000U;
@@ -311,6 +333,7 @@ void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
         }
 
         if (pending & (1U << 5)) { // STIP
+            cpu->pc_host_ptr = NULL; // 割り込み発生時にキャッシュ破棄
             cpu->sepc = cpu->pc;
             cpu->scause.lo = 5U;          
             cpu->scause.hi = 0x80000000U;
@@ -376,15 +399,15 @@ int main(void) {
     while (!cpu.halted) {
         check_pending_interrupts(&cpu);
         if ((inst_count & 0x3FF) == 0) {
-                    uint64_t now = time_us_64();
-                    if (now - last_time >= 1000000) {
-                        uint64_t delta = inst_count - last_inst;
-                        printf("[PERF] Delta: %llu inst/s (Total: %llu)\n", delta, inst_count);
-                        last_time = now;
-                        last_inst = inst_count;
-                        }
-                clint_update_timer_interrupt(&cpu);
-                }
+            uint64_t now = time_us_64();
+            if (now - last_time >= 1000000) {
+                uint64_t delta = inst_count - last_inst;
+                printf("[PERF] Delta: %llu inst/s (Total: %llu)\n", delta, inst_count);
+                last_time = now;
+                last_inst = inst_count;
+            }
+            clint_update_timer_interrupt(&cpu);
+        }
 
         // UART(Per 256 inst)
         if ((inst_count & 0xFF) == 0) {
@@ -416,7 +439,6 @@ int main(void) {
         }
         
         inst_count++;
-
     }
 
     printf("CPU halted after executing %llu instructions.\n", inst_count);
