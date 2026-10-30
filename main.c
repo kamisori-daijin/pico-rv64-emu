@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include "pico/stdlib.h"
+#include "hardware/clocks.h"
 #include "cpu.h"
 #include "uart.h"
 #include "clint.h"
@@ -332,11 +333,14 @@ void check_pending_interrupts(RV64CPU *cpu) {
 // Main func and emu loop
 // ============================================================================
 
+
 int main(void) {
+    set_sys_clock_khz(250000, true);
     stdio_init_all();
     sleep_ms(2000);
     setvbuf(stdout, NULL, _IONBF, 0);
-
+    uint32_t sys_clk = clock_get_hz(clk_sys);
+    printf("Actual System Clock: %lu Hz (%lu MHz)\n", sys_clk, sys_clk / 1000000);
     for (int i = 5; i > 0; i--) {
         printf("Waiting for serial terminal... %d seconds\n", i);
         sleep_ms(1000);
