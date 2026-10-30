@@ -1,4 +1,5 @@
 #include "cpu.h"
+#include "../mmu/tlb.h" // ★ TLB フラッシュ呼び出し用に追加
 #include <stdio.h>
 #include <stdbool.h>
 #include "pico.h" 
@@ -79,7 +80,7 @@ static inline void reg64_divu(reg64_t *d, reg64_t a, reg64_t b) {
         d->lo = 0xFFFFFFFF; d->hi = 0xFFFFFFFF;
     } else {
         uint64_t res = va / vb;
-        d->lo = (uint32_t)res; d->hi = (uint32_t)(res >> 32);
+        d->lo = (uint32_t)res; d->hi = (uint32_t)((uint64_t)res >> 32);
     }
 }
 
@@ -101,7 +102,7 @@ static inline void reg64_remu(reg64_t *d, reg64_t a, reg64_t b) {
         *d = a;
     } else {
         uint64_t res = va % vb;
-        d->lo = (uint32_t)res; d->hi = (uint32_t)(res >> 32);
+        d->lo = (uint32_t)res; d->hi = (uint32_t)((uint64_t)res >> 32);
     }
 }
 
@@ -577,6 +578,11 @@ op_system: {
             cpu->pc.lo += 4;
             cpu->pc.hi = 0;
             return;
+        } else if (((inst >> 25) & 0x7F) == 0x09) { // ★ sfence.vma
+            tlb_flush();
+            cpu->pc.lo += 4;
+            cpu->pc.hi = 0;
+            return;
         }
     }
     reg64_t *target_csr = NULL;
@@ -610,7 +616,10 @@ op_system: {
         
         reg64_t new_val = { .lo = (uint32_t)new_u64, .hi = (uint32_t)(new_u64 >> 32) };
         if (target_csr != NULL) *target_csr = new_val;
-        if (csr_addr == 0x180) cpu->satp = new_val;
+        if (csr_addr == 0x180) { // ★ satp 更新時に TLB キャッシュをクリア
+            cpu->satp = new_val;
+            tlb_flush();
+        }
     }
     if (rd != 0) cpu->x[rd] = old_val;
     goto end_inst;
