@@ -13,6 +13,13 @@ extern void mem_write16(uint32_t paddr, uint16_t val);
 extern void mem_write32(uint32_t paddr, uint32_t val);
 extern void mem_write64(uint32_t paddr, reg64_t val);
 
+static inline reg64_t make_reg64_imm(int32_t imm) {
+    reg64_t r;
+    r.lo = (uint32_t)imm;
+    r.hi = (imm < 0) ? 0xFFFFFFFF : 0x00000000;
+    return r;
+}
+
 static inline void set_reg64_imm(RV64CPU *cpu, uint32_t rd, int32_t imm) {
     if (rd == 0) return;
     cpu->x[rd].lo = (uint32_t)imm;
@@ -275,9 +282,8 @@ op_sd: {
 op_addi: {
     uint32_t rd = (inst >> 7) & 0x1F, rs1 = (inst >> 15) & 0x1F;
     if (rd != 0) {
-        reg64_t imm_val;
-        set_reg64_imm(cpu, rd, (int32_t)inst >> 20);
-        imm_val = cpu->x[rd];
+        int32_t imm = (int32_t)inst >> 20;
+        reg64_t imm_val = make_reg64_imm(imm);
         reg64_add(&cpu->x[rd], cpu->x[rs1], imm_val);
     }
     goto end_inst;
@@ -289,18 +295,14 @@ op_slli: {
 }
 op_slti: {
     uint32_t rd = (inst >> 7) & 0x1F, rs1 = (inst >> 15) & 0x1F;
-    reg64_t imm_val;
-    set_reg64_imm(cpu, 31, (int32_t)inst >> 20); // 共通バッファ
-    imm_val = cpu->x[31];
-    set_reg64_imm(cpu, rd, reg64_slt(cpu->x[rs1], imm_val) ? 1 : 0);
+    int32_t imm = (int32_t)inst >> 20;
+    set_reg64_imm(cpu, rd, reg64_slt(cpu->x[rs1], make_reg64_imm(imm)) ? 1 : 0);
     goto end_inst;
 }
 op_sltiu: {
     uint32_t rd = (inst >> 7) & 0x1F, rs1 = (inst >> 15) & 0x1F;
-    reg64_t imm_val;
-    set_reg64_imm(cpu, 31, (int32_t)inst >> 20);
-    imm_val = cpu->x[31];
-    set_reg64_imm(cpu, rd, reg64_sltu(cpu->x[rs1], imm_val) ? 1 : 0);
+    int32_t imm = (int32_t)inst >> 20;
+    set_reg64_imm(cpu, rd, reg64_sltu(cpu->x[rs1], make_reg64_imm(imm)) ? 1 : 0);
     goto end_inst;
 }
 op_xori: {
@@ -472,9 +474,7 @@ op_lui: {
 op_auipc: {
     uint32_t rd = (inst >> 7) & 0x1F;
     if (rd != 0) {
-        reg64_t offset;
-        set_reg64_imm(cpu, 31, get_u_imm(inst));
-        offset = cpu->x[31];
+        reg64_t offset = make_reg64_imm(get_u_imm(inst));
         reg64_add(&cpu->x[rd], cpu->pc, offset);
     }
     goto end_inst;
@@ -490,7 +490,7 @@ op_jal: {
         cpu->x[rd].hi = 0;
     }
     cpu->pc.lo += (uint32_t)offset;
-    cpu->pc.hi = 0; // ★ pc.hi をクリア
+    cpu->pc.hi = 0;
     return;
 }
 op_jalr: {
@@ -503,7 +503,7 @@ op_jalr: {
         cpu->x[rd].hi = 0;
     }
     cpu->pc.lo = target;
-    cpu->pc.hi = 0; // ★ pc.hi をクリア
+    cpu->pc.hi = 0;
     return;
 }
 
@@ -519,7 +519,7 @@ do_branch: {
                     ((inst >> 25) & 0x3F) << 5 | ((inst >> 8) & 0xF) << 1;
     if (imm_b & 0x1000) imm_b |= 0xFFFFE000;
     cpu->pc.lo += (uint32_t)imm_b;
-    cpu->pc.hi = 0; // ★ pc.hi をクリア
+    cpu->pc.hi = 0;
     return;
 }
 
@@ -531,7 +531,7 @@ op_system: {
             uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
             uint64_t sie = (sstatus_val >> 1) & 1;
             
-            cpu->scause.hi = 0; // ★ scause.hi を必ずクリア！
+            cpu->scause.hi = 0;
             if (cpu->priv_mode == 0) {
                 cpu->scause.lo = 8;
             } else {
