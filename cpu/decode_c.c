@@ -1,5 +1,5 @@
 #include "decode_c.h"
-#include "mmu.h"
+#include "../mmu/mmu.h"
 #include <stdio.h>
 
 extern uint8_t guest_ram[];

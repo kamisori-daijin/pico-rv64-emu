@@ -4,14 +4,14 @@
 #include "pico/stdlib.h"
 #include "pico.h"
 #include "hardware/clocks.h"
-#include "cpu.h"
-#include "uart.h"
-#include "clint.h"
-#include "plic.h"
-#include "virtio.h"
-#include "decode_c.h"
-#include "mmu.h"
-#include "tlb.h"
+#include "cpu/cpu.h"
+#include "devices/uart.h"
+#include "devices/clint.h"
+#include "devices/plic.h"
+#include "devices/virtio.h"
+#include "cpu/decode_c.h"
+#include "mmu/mmu.h"
+#include "mmu/tlb.h"
 
 #define RAM_SIZE (416 * 1024)
 #define RAM_BASE 0x80000000ULL

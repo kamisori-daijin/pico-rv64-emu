@@ -1,7 +1,7 @@
 #include "uart.h"
 #include <stdio.h>
 #include "pico/stdlib.h"
-#include "cpu.h"
+#include "../cpu/cpu.h"
 
 #define RV_UART0_BASE 0x10000000U
 #define RV_UART0_SIZE 0x100U
