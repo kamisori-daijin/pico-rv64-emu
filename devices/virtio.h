@@ -18,7 +18,7 @@ static const unsigned int fs_img_len = 0;
 #endif
 
 // Diff Cache (64 -> 256 Sector = 128KB SRAM Used)
-#define CACHE_SECTORS 128
+#define CACHE_SECTORS 64
 typedef struct {
     uint64_t sector;
     uint8_t data[512];
