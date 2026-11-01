@@ -15,7 +15,7 @@ bool __not_in_flash_func(mmu_translate)(RV64CPU *cpu, uint32_t va_lo, uint32_t v
     uint64_t satp_64 = ((uint64_t)cpu->satp.hi << 32) | cpu->satp.lo;
     uint32_t mode = (uint32_t)(satp_64 >> 60) & 0xF;
 
-    // Mモード、または satp.MODE != 8 (Sv39無効) の場合は物理アドレス直結
+    // If in M-mode, or if satp.MODE != 8 (Sv39 disabled), directly connect to the physical address
     if (cpu->priv_mode == 3 || mode != 8) {
         *pa_out = va_lo;
         return true;
@@ -25,14 +25,14 @@ bool __not_in_flash_func(mmu_translate)(RV64CPU *cpu, uint32_t va_lo, uint32_t v
     uint64_t vpn_val = va_64 >> 12;
     uint32_t page_offset = va_64 & 0xFFF;
 
-    // ★ 1. TLBルックアップ (超高速パス)
+    // TLB Lookup
     uint32_t tlb_ppn = 0;
     if (tlb_lookup(vpn_val, (uint8_t)access, &tlb_ppn)) {
         *pa_out = (tlb_ppn << 12) | page_offset;
         return true;
     }
 
-    // ★ 2. TLBミス時のみ従来のページウォークを実行
+    // Pagewalk when tlb miss
     uint32_t vpn[3];
     vpn[2] = (va_64 >> 30) & 0x1FF;
     vpn[1] = (va_64 >> 21) & 0x1FF;
@@ -46,7 +46,7 @@ bool __not_in_flash_func(mmu_translate)(RV64CPU *cpu, uint32_t va_lo, uint32_t v
         reg64_t pte_reg = mem_read64_phys((uint32_t)pte_addr);
         uint64_t pte = ((uint64_t)pte_reg.hi << 32) | pte_reg.lo;
 
-        // V Bit チェック
+        // V Bit Check
         if ((pte & PTE_V) == 0) {
             return false;
         }
@@ -60,7 +60,7 @@ bool __not_in_flash_func(mmu_translate)(RV64CPU *cpu, uint32_t va_lo, uint32_t v
             return false;
         }
 
-        // リーフPTE到達時の権限チェック
+        // PTE check
         if (r || x) {
             if (cpu->priv_mode == 0 && !u) return false;
             
@@ -84,8 +84,8 @@ bool __not_in_flash_func(mmu_translate)(RV64CPU *cpu, uint32_t va_lo, uint32_t v
                 *pa_out = (final_ppn << 12) | page_offset;
             }
 
-            // ★ 3. 変換成功結果を TLB に登録して次回から爆速化
-            // AccessType (EXEC=0, READ=1, WRITE=2) に対応するビットフラグを作成
+            // ★ 3. Register the successful translation result in the TLB
+            // Create a bit flag corresponding to AccessType (EXEC=0, READ=1, WRITE=2)
             uint8_t perm = (x ? (1U << FETCH_EXEC) : 0) |
                            (r ? (1U << FETCH_READ) : 0) |
                            (w ? (1U << FETCH_WRITE) : 0);
@@ -94,7 +94,7 @@ bool __not_in_flash_func(mmu_translate)(RV64CPU *cpu, uint32_t va_lo, uint32_t v
             return true;
         }
 
-        // 次のレベルのページテーブルへ
+        // next level pagewalk
         uint64_t next_ppn = (pte >> 10) & 0x000FFFFFFFFFFFFULL;
         a = next_ppn << 12;
     }

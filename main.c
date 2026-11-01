@@ -38,8 +38,8 @@ static inline uint32_t get_va_hi(uint32_t vaddr) {
 }
 
 static void handle_page_fault(uint32_t vaddr, uint32_t cause) {
-    g_cpu->pc_host_ptr = NULL;   // トラップ時にPCキャッシュ破棄
-    g_cpu->data_host_ptr = NULL; // トラップ時にDataキャッシュ破棄
+    g_cpu->pc_host_ptr = NULL;   // PC clear
+    g_cpu->data_host_ptr = NULL; // Data clear
     g_cpu->sepc = g_cpu->pc;
     g_cpu->stval.lo = vaddr;
     g_cpu->stval.hi = 0;
@@ -530,7 +530,7 @@ int main(void) {
             clint_update_timer_interrupt(&cpu);
         }
 
-        // UART (Per 4096 inst に調整して処理を軽減)
+        // UART (Per 4096 inst )
         if (__builtin_expect((inst_count & 0xFFF) == 0, 0)) {
             uart_check_input();
         }
@@ -541,7 +541,7 @@ int main(void) {
         uint32_t page_va = vaddr >> 12;
         uint32_t offset = vaddr & 0xFFF;
 
-        // ★ 32bit一括フェッチ Fast-Path (同一ページ内 ＆ 0xFFC以下)
+        // ★ 32-bit Batch Fetch Fast-Path (Within the same page & 0xFFC or less)
         if (__builtin_expect(cpu.pc_host_ptr != NULL &&
                              cpu.pc_page_va == page_va &&
                              offset <= 4092, 1)) {
@@ -554,7 +554,7 @@ int main(void) {
                 execute_compressed_instruction(&cpu, (uint16_t)(inst & 0xFFFF));
             }
         } else {
-            // ★ Slow-Path: 境界跨ぎ・キャッシュ未ヒット時
+            // ★ Slow-Path: When crossing boundaries or on a cache miss
             uint16_t half = mem_fetch16(vaddr);
             if (cpu.halted || cpu.trap_raised) continue;
 

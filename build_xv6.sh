@@ -48,4 +48,6 @@ cp fs_img.inc ../
 cp kernel.bin.inc ../
 cp kernel.bin ../
 echo "copied"
+cd -
+
 
