@@ -4,14 +4,14 @@
 #include "pico/stdlib.h"
 #include "pico.h"
 #include "hardware/clocks.h"
-#include "cpu.h"
-#include "uart.h"
-#include "clint.h"
-#include "plic.h"
-#include "virtio.h"
-#include "decode_c.h"
-#include "mmu.h"
-#include "tlb.h"
+#include "cpu/cpu.h"
+#include "devices/uart.h"
+#include "devices/clint.h"
+#include "devices/plic.h"
+#include "devices/virtio.h"
+#include "cpu/decode_c.h"
+#include "mmu/mmu.h"
+#include "mmu/tlb.h"
 
 #define RAM_SIZE (416 * 1024)
 #define RAM_BASE 0x80000000ULL
@@ -38,6 +38,8 @@ static inline uint32_t get_va_hi(uint32_t vaddr) {
 }
 
 static void handle_page_fault(uint32_t vaddr, uint32_t cause) {
+    g_cpu->pc_host_ptr = NULL;   // トラップ時にPCキャッシュ破棄
+    g_cpu->data_host_ptr = NULL; // トラップ時にDataキャッシュ破棄
     g_cpu->sepc = g_cpu->pc;
     g_cpu->stval.lo = vaddr;
     g_cpu->stval.hi = 0;
@@ -143,11 +145,29 @@ void __not_in_flash_func(mem_write64_phys)(uint32_t paddr, reg64_t val) {
 // ============================================================================
 
 uint16_t __not_in_flash_func(mem_fetch16)(uint32_t vaddr) {
+    uint32_t page_va = vaddr >> 12;
+    uint32_t offset = vaddr & 0xFFF;
+
+    if (__builtin_expect(g_cpu->pc_host_ptr != NULL &&
+                         g_cpu->pc_page_va == page_va &&
+                         offset <= 4094, 1)) {
+        uint16_t val;
+        __builtin_memcpy(&val, g_cpu->pc_host_ptr + offset, sizeof(val));
+        return val;
+    }
+
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_EXEC, &paddr)) {
+        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
+            g_cpu->pc_page_va = page_va;
+            g_cpu->pc_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
+        } else {
+            g_cpu->pc_host_ptr = NULL;
+        }
         return mem_read16_phys(paddr);
     }
+
     if (g_cpu->priv_mode == 0) {
         handle_page_fault(vaddr, 12);
         return 0;
@@ -175,9 +195,23 @@ uint32_t __not_in_flash_func(mem_fetch32)(uint32_t vaddr) {
 }
 
 uint8_t __not_in_flash_func(mem_read8)(uint32_t vaddr) {
+    uint32_t page_va = vaddr >> 12;
+    uint32_t offset = vaddr & 0xFFF;
+
+    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
+                         g_cpu->data_page_va == page_va, 1)) {
+        return *(g_cpu->data_host_ptr + offset);
+    }
+
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
+        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
+            g_cpu->data_page_va = page_va;
+            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
+        } else {
+            g_cpu->data_host_ptr = NULL;
+        }
         return mem_read8_phys(paddr);
     }
     if (g_cpu->priv_mode == 0) {
@@ -191,9 +225,26 @@ uint8_t __not_in_flash_func(mem_read8)(uint32_t vaddr) {
 }
 
 uint16_t __not_in_flash_func(mem_read16)(uint32_t vaddr) {
+    uint32_t page_va = vaddr >> 12;
+    uint32_t offset = vaddr & 0xFFF;
+
+    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
+                         g_cpu->data_page_va == page_va &&
+                         offset <= 4094, 1)) {
+        uint16_t val;
+        __builtin_memcpy(&val, g_cpu->data_host_ptr + offset, sizeof(val));
+        return val;
+    }
+
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
+        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
+            g_cpu->data_page_va = page_va;
+            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
+        } else {
+            g_cpu->data_host_ptr = NULL;
+        }
         return mem_read16_phys(paddr);
     }
     if (g_cpu->priv_mode == 0) {
@@ -207,9 +258,26 @@ uint16_t __not_in_flash_func(mem_read16)(uint32_t vaddr) {
 }
 
 uint32_t __not_in_flash_func(mem_read32)(uint32_t vaddr) {
+    uint32_t page_va = vaddr >> 12;
+    uint32_t offset = vaddr & 0xFFF;
+
+    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
+                         g_cpu->data_page_va == page_va &&
+                         offset <= 4092, 1)) {
+        uint32_t val;
+        __builtin_memcpy(&val, g_cpu->data_host_ptr + offset, sizeof(val));
+        return val;
+    }
+
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
+        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
+            g_cpu->data_page_va = page_va;
+            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
+        } else {
+            g_cpu->data_host_ptr = NULL;
+        }
         return mem_read32_phys(paddr);
     }
     if (g_cpu->priv_mode == 0) {
@@ -223,6 +291,17 @@ uint32_t __not_in_flash_func(mem_read32)(uint32_t vaddr) {
 }
 
 reg64_t __not_in_flash_func(mem_read64)(uint32_t vaddr) {
+    uint32_t page_va = vaddr >> 12;
+    uint32_t offset = vaddr & 0xFFF;
+
+    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
+                         g_cpu->data_page_va == page_va &&
+                         offset <= 4088, 1)) {
+        reg64_t val;
+        __builtin_memcpy(&val, g_cpu->data_host_ptr + offset, sizeof(val));
+        return val;
+    }
+
     reg64_t val;
     val.lo = mem_read32(vaddr);
     val.hi = mem_read32(vaddr + 4U);
@@ -230,9 +309,24 @@ reg64_t __not_in_flash_func(mem_read64)(uint32_t vaddr) {
 }
 
 void __not_in_flash_func(mem_write8)(uint32_t vaddr, uint8_t val) {
+    uint32_t page_va = vaddr >> 12;
+    uint32_t offset = vaddr & 0xFFF;
+
+    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
+                         g_cpu->data_page_va == page_va, 1)) {
+        *(g_cpu->data_host_ptr + offset) = val;
+        return;
+    }
+
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
+        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
+            g_cpu->data_page_va = page_va;
+            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
+        } else {
+            g_cpu->data_host_ptr = NULL;
+        }
         mem_write8_phys(paddr, val);
         return;
     }
@@ -246,9 +340,25 @@ void __not_in_flash_func(mem_write8)(uint32_t vaddr, uint8_t val) {
 }
 
 void __not_in_flash_func(mem_write16)(uint32_t vaddr, uint16_t val) {
+    uint32_t page_va = vaddr >> 12;
+    uint32_t offset = vaddr & 0xFFF;
+
+    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
+                         g_cpu->data_page_va == page_va &&
+                         offset <= 4094, 1)) {
+        __builtin_memcpy(g_cpu->data_host_ptr + offset, &val, sizeof(val));
+        return;
+    }
+
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
+        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
+            g_cpu->data_page_va = page_va;
+            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
+        } else {
+            g_cpu->data_host_ptr = NULL;
+        }
         mem_write16_phys(paddr, val);
         return;
     }
@@ -262,9 +372,25 @@ void __not_in_flash_func(mem_write16)(uint32_t vaddr, uint16_t val) {
 }
 
 void __not_in_flash_func(mem_write32)(uint32_t vaddr, uint32_t val) {
+    uint32_t page_va = vaddr >> 12;
+    uint32_t offset = vaddr & 0xFFF;
+
+    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
+                         g_cpu->data_page_va == page_va &&
+                         offset <= 4092, 1)) {
+        __builtin_memcpy(g_cpu->data_host_ptr + offset, &val, sizeof(val));
+        return;
+    }
+
     uint32_t paddr = vaddr;
     uint32_t va_hi = get_va_hi(vaddr);
     if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
+        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
+            g_cpu->data_page_va = page_va;
+            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
+        } else {
+            g_cpu->data_host_ptr = NULL;
+        }
         mem_write32_phys(paddr, val);
         return;
     }
@@ -278,20 +404,31 @@ void __not_in_flash_func(mem_write32)(uint32_t vaddr, uint32_t val) {
 }
 
 void __not_in_flash_func(mem_write64)(uint32_t vaddr, reg64_t val) {
+    uint32_t page_va = vaddr >> 12;
+    uint32_t offset = vaddr & 0xFFF;
+
+    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
+                         g_cpu->data_page_va == page_va &&
+                         offset <= 4088, 1)) {
+        __builtin_memcpy(g_cpu->data_host_ptr + offset, &val, sizeof(val));
+        return;
+    }
+
     mem_write32(vaddr, val.lo);
     mem_write32(vaddr + 4U, val.hi);
 }
 
-// one inst
 void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
     uint32_t pending = cpu->mip.lo & cpu->sie.lo;
-    if (!pending) return; // ★ Fast path
+    if (!pending) return;
 
     uint64_t sstatus_val = ((uint64_t)cpu->sstatus.hi << 32) | cpu->sstatus.lo;
     bool sie_enabled = (sstatus_val & (1ULL << 1)) != 0;
 
     if (cpu->priv_mode == 0 || (cpu->priv_mode == 1 && sie_enabled)) {
         if (pending & (1U << 9)) { // SEIP
+            cpu->pc_host_ptr = NULL;
+            cpu->data_host_ptr = NULL;
             cpu->sepc = cpu->pc;
             cpu->scause.lo = 9U;          
             cpu->scause.hi = 0x80000000U;
@@ -311,6 +448,8 @@ void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
         }
 
         if (pending & (1U << 5)) { // STIP
+            cpu->pc_host_ptr = NULL;
+            cpu->data_host_ptr = NULL;
             cpu->sepc = cpu->pc;
             cpu->scause.lo = 5U;          
             cpu->scause.hi = 0x80000000U;
@@ -370,51 +509,71 @@ int main(void) {
     fflush(stdout);
 
     unsigned long long inst_count = 0;
-    //uint64_t last_time = time_us_64();
-    //uint64_t last_inst = 0;
+    uint64_t last_time = time_us_64();
+    uint64_t last_inst = 0;
 
-    while (!cpu.halted) {
+    while (__builtin_expect(!cpu.halted, 1)) {
         check_pending_interrupts(&cpu);
-        //if ((inst_count & 0x3FF) == 0) {
-                    //uint64_t now = time_us_64();
-                    //if (now - last_time >= 1000000) {
-                        //uint64_t delta = inst_count - last_inst;
-                        //printf("[PERF] Delta: %llu inst/s (Total: %llu)\n", delta, inst_count);
-                        //last_time = now;
-                        //last_inst = inst_count;
-                        //}
-                //clint_update_timer_interrupt(&cpu);
-                //}
 
-        // UART(Per 256 inst)
-        if ((inst_count & 0xFF) == 0) {
-            uart_check_input();
-        }
-        if ((inst_count & 0x3FF) == 0) {
+        if (__builtin_expect((inst_count & 0x3FF) == 0, 0)) {
+            uint64_t now = time_us_64();
+            if (now - last_time >= 1000000) {
+                uint64_t delta_inst = inst_count - last_inst;
+                uint64_t delta_time_us = now - last_time; 
+                uint64_t real_inst_per_sec = (delta_inst * 1000000ULL) / delta_time_us;
+
+                printf("[PERF] Delta: %llu inst/s (Total: %llu)\n", real_inst_per_sec, inst_count);
+                
+                last_time = now;
+                last_inst = inst_count;
+            }
             clint_update_timer_interrupt(&cpu);
+        }
+
+        // UART (Per 4096 inst に調整して処理を軽減)
+        if (__builtin_expect((inst_count & 0xFFF) == 0, 0)) {
+            uart_check_input();
         }
 
         cpu.trap_raised = false;
 
         uint32_t vaddr = cpu.pc.lo;
-        uint16_t half = mem_fetch16(vaddr);
-        if (cpu.halted || cpu.trap_raised) continue;
+        uint32_t page_va = vaddr >> 12;
+        uint32_t offset = vaddr & 0xFFF;
 
-        if ((half & 0x3) == 0x3) {
-            if (vaddr % 2 != 0) {
-                printf("[ERROR] Misaligned instruction fetch! PC = 0x%08X\n", vaddr);
-                cpu.halted = true;
-                break;
+        // ★ 32bit一括フェッチ Fast-Path (同一ページ内 ＆ 0xFFC以下)
+        if (__builtin_expect(cpu.pc_host_ptr != NULL &&
+                             cpu.pc_page_va == page_va &&
+                             offset <= 4092, 1)) {
+            uint32_t inst;
+            __builtin_memcpy(&inst, cpu.pc_host_ptr + offset, sizeof(inst));
+
+            if ((inst & 0x3) == 0x3) {
+                execute_instruction(&cpu, inst);
+            } else {
+                execute_compressed_instruction(&cpu, (uint16_t)(inst & 0xFFFF));
             }
-            uint16_t half_high = mem_fetch16(vaddr + 2);
+        } else {
+            // ★ Slow-Path: 境界跨ぎ・キャッシュ未ヒット時
+            uint16_t half = mem_fetch16(vaddr);
             if (cpu.halted || cpu.trap_raised) continue;
 
-            uint32_t inst = (uint32_t)half | ((uint32_t)half_high << 16);
-            execute_instruction(&cpu, inst);
-        } else {
-            execute_compressed_instruction(&cpu, half);
+            if ((half & 0x3) == 0x3) {
+                if (vaddr % 2 != 0) {
+                    printf("[ERROR] Misaligned instruction fetch! PC = 0x%08X\n", vaddr);
+                    cpu.halted = true;
+                    break;
+                }
+                uint16_t half_high = mem_fetch16(vaddr + 2);
+                if (cpu.halted || cpu.trap_raised) continue;
+
+                uint32_t inst = (uint32_t)half | ((uint32_t)half_high << 16);
+                execute_instruction(&cpu, inst);
+            } else {
+                execute_compressed_instruction(&cpu, half);
+            }
         }
-        
+
         inst_count++;
     }
 

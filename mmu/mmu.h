@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "cpu.h"
+#include "../cpu/cpu.h"
 #include "pico.h"
 
 // Access type

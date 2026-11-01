@@ -13,13 +13,13 @@ pico_sdk_init()
 
 add_executable(rv64_emu
     main.c
-    decode_i.c
-    decode_c.c
-    uart.c
-    clint.c   
-    mmu.c
-    plic.c
-    tlb.c
+    cpu/decode_i.c
+    cpu/decode_c.c
+    devices/uart.c
+    devices/clint.c   
+    mmu/mmu.c
+    devices/plic.c
+    mmu/tlb.c
     ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
 )
 

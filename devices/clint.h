@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "cpu.h"
+#include "../cpu/cpu.h"
 
 #define CLINT_BASE 0x02000000ULL
 #define CLINT_SIZE 0x10000ULL

@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "cpu.h"
+#include "../cpu/cpu.h"
 
 #define PLIC_BASE 0x0C000000U
 #define PLIC_SIZE 0x00400000U
