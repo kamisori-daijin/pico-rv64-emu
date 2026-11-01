@@ -6,417 +6,14 @@
 #include "hardware/clocks.h"
 #include "cpu/cpu.h"
 #include "devices/uart.h"
-#include "devices/clint.h"
-#include "devices/plic.h"
-#include "devices/virtio.h"
 #include "cpu/decode_c.h"
-#include "mmu/mmu.h"
 #include "mmu/tlb.h"
-
-#define RAM_SIZE (416 * 1024)
-#define RAM_BASE 0x80000000ULL
+#include "memory.h"
 
 uint8_t guest_ram[RAM_SIZE];
-
-#include "kernel.bin.inc"
-
 RV64CPU *g_cpu = NULL;
 
-static inline uint8_t* paddr_to_host(uint32_t paddr) {
-    uint32_t offset = paddr - RAM_BASE;
-    if (offset < RAM_SIZE) {
-        return &guest_ram[offset];
-    }
-    return NULL;
-}
-
-static inline uint32_t get_va_hi(uint32_t vaddr) {
-    if ((vaddr & 0xF0000000U) == 0xF0000000U) {
-        return 0x0000003F;
-    }
-    return 0x00000000;
-}
-
-static void handle_page_fault(uint32_t vaddr, uint32_t cause) {
-    g_cpu->pc_host_ptr = NULL;   // PC clear
-    g_cpu->data_host_ptr = NULL; // Data clear
-    g_cpu->sepc = g_cpu->pc;
-    g_cpu->stval.lo = vaddr;
-    g_cpu->stval.hi = 0;
-    g_cpu->scause.lo = cause;
-    g_cpu->scause.hi = 0;
-
-    uint64_t sstatus_val = ((uint64_t)g_cpu->sstatus.hi << 32) | g_cpu->sstatus.lo;
-    uint64_t sie = (sstatus_val >> 1) & 1;
-    sstatus_val &= ~(1ULL << 8);
-    if (g_cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);
-    sstatus_val = (sstatus_val & ~(1ULL << 5)) | (sie << 5);
-    sstatus_val &= ~(1ULL << 1);
-    g_cpu->sstatus.lo = (uint32_t)sstatus_val;
-    g_cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
-
-    g_cpu->priv_mode = 1;
-    g_cpu->pc.lo = g_cpu->stvec.lo & ~0x3U;
-    g_cpu->pc.hi = g_cpu->stvec.hi;
-
-    g_cpu->trap_raised = true;
-}
-
-// ============================================================================
-// 1. Access to physical memory(_phys) 
-// ============================================================================
-
-uint8_t __not_in_flash_func(mem_read8_phys)(uint32_t paddr) {
-    if (uart_is_addr(paddr)) return uart_read8(paddr);
-    uint8_t *host_ptr = paddr_to_host(paddr);
-    if (!host_ptr) {
-        printf("[PHYS READ FAULT 8] PA=0x%08X\n", paddr);
-        if (g_cpu) g_cpu->halted = true;
-        return 0;
-    }
-    return *host_ptr;
-}
-
-uint16_t __not_in_flash_func(mem_read16_phys)(uint32_t paddr) {
-    if (uart_is_addr(paddr)) return (uint16_t)uart_read8(paddr);
-    uint8_t *host_ptr = paddr_to_host(paddr);
-    if (!host_ptr) {
-        printf("[PHYS READ FAULT 16] PA=0x%08X\n", paddr);
-        if (g_cpu) g_cpu->halted = true;
-        return 0;
-    }
-    uint16_t val;
-    __builtin_memcpy(&val, host_ptr, sizeof(val));
-    return val;
-}
-
-uint32_t __not_in_flash_func(mem_read32_phys)(uint32_t paddr) {
-    if (uart_is_addr(paddr))   return (uint32_t)uart_read8(paddr);
-    if (clint_is_addr(paddr))  return clint_read32(paddr);
-    if (virtio_is_addr(paddr)) return virtio_read32(paddr);
-    if (plic_is_addr(paddr))   return plic_read32(paddr);
-    uint8_t *host_ptr = paddr_to_host(paddr);
-    if (!host_ptr) {
-        printf("[PHYS READ FAULT 32] PA=0x%08X\n", paddr);
-        if (g_cpu) g_cpu->halted = true;
-        return 0;
-    }
-    uint32_t val;
-    __builtin_memcpy(&val, host_ptr, sizeof(val));
-    return val;
-}
-
-reg64_t __not_in_flash_func(mem_read64_phys)(uint32_t paddr) {
-    reg64_t val;
-    val.lo = mem_read32_phys(paddr);
-    val.hi = mem_read32_phys(paddr + 4U);
-    return val;
-}
-
-void __not_in_flash_func(mem_write8_phys)(uint32_t paddr, uint8_t val) {
-    if (uart_is_addr(paddr)) { uart_write8(paddr, val); return; }
-    uint8_t *host_ptr = paddr_to_host(paddr);
-    if (host_ptr) *host_ptr = val;
-}
-
-void __not_in_flash_func(mem_write16_phys)(uint32_t paddr, uint16_t val) {
-    if (uart_is_addr(paddr)) { uart_write8(paddr, (uint8_t)(val & 0xFF)); return; }
-    uint8_t *host_ptr = paddr_to_host(paddr);
-    if (host_ptr) __builtin_memcpy(host_ptr, &val, sizeof(val));
-}
-
-void __not_in_flash_func(mem_write32_phys)(uint32_t paddr, uint32_t val) {
-    if (uart_is_addr(paddr)) { uart_write8(paddr, (uint8_t)(val & 0xFF)); return; }
-    if (clint_is_addr(paddr)) { clint_write32(paddr, val); return; }
-    if (virtio_is_addr(paddr)) { virtio_write32(paddr, val); return; }
-    if (plic_is_addr(paddr)) { plic_write32(paddr, val, g_cpu); return; }
-
-    uint8_t *host_ptr = paddr_to_host(paddr);
-    if (host_ptr) __builtin_memcpy(host_ptr, &val, sizeof(val));
-}
-
-void __not_in_flash_func(mem_write64_phys)(uint32_t paddr, reg64_t val) {
-    mem_write32_phys(paddr, val.lo);
-    mem_write32_phys(paddr + 4U, val.hi);
-}
-
-// ============================================================================
-// 2. MMU Route public memory
-// ============================================================================
-
-uint16_t __not_in_flash_func(mem_fetch16)(uint32_t vaddr) {
-    uint32_t page_va = vaddr >> 12;
-    uint32_t offset = vaddr & 0xFFF;
-
-    if (__builtin_expect(g_cpu->pc_host_ptr != NULL &&
-                         g_cpu->pc_page_va == page_va &&
-                         offset <= 4094, 1)) {
-        uint16_t val;
-        __builtin_memcpy(&val, g_cpu->pc_host_ptr + offset, sizeof(val));
-        return val;
-    }
-
-    uint32_t paddr = vaddr;
-    uint32_t va_hi = get_va_hi(vaddr);
-    if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_EXEC, &paddr)) {
-        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
-            g_cpu->pc_page_va = page_va;
-            g_cpu->pc_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
-        } else {
-            g_cpu->pc_host_ptr = NULL;
-        }
-        return mem_read16_phys(paddr);
-    }
-
-    if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 12);
-        return 0;
-    }
-    printf("[FETCH FAULT 16] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
-    fflush(stdout);
-    g_cpu->halted = true;
-    return 0;
-}
-
-uint32_t __not_in_flash_func(mem_fetch32)(uint32_t vaddr) {
-    uint32_t paddr = vaddr;
-    uint32_t va_hi = get_va_hi(vaddr);
-    if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_EXEC, &paddr)) {
-        return mem_read32_phys(paddr);
-    }
-    if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 12);
-        return 0;
-    }
-    printf("[FETCH FAULT 32] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
-    fflush(stdout);
-    g_cpu->halted = true;
-    return 0;
-}
-
-uint8_t __not_in_flash_func(mem_read8)(uint32_t vaddr) {
-    uint32_t page_va = vaddr >> 12;
-    uint32_t offset = vaddr & 0xFFF;
-
-    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
-                         g_cpu->data_page_va == page_va, 1)) {
-        return *(g_cpu->data_host_ptr + offset);
-    }
-
-    uint32_t paddr = vaddr;
-    uint32_t va_hi = get_va_hi(vaddr);
-    if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
-        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
-            g_cpu->data_page_va = page_va;
-            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
-        } else {
-            g_cpu->data_host_ptr = NULL;
-        }
-        return mem_read8_phys(paddr);
-    }
-    if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 13);
-        return 0;
-    }
-    printf("[READ FAULT 8] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
-    fflush(stdout);
-    g_cpu->halted = true;
-    return 0;
-}
-
-uint16_t __not_in_flash_func(mem_read16)(uint32_t vaddr) {
-    uint32_t page_va = vaddr >> 12;
-    uint32_t offset = vaddr & 0xFFF;
-
-    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
-                         g_cpu->data_page_va == page_va &&
-                         offset <= 4094, 1)) {
-        uint16_t val;
-        __builtin_memcpy(&val, g_cpu->data_host_ptr + offset, sizeof(val));
-        return val;
-    }
-
-    uint32_t paddr = vaddr;
-    uint32_t va_hi = get_va_hi(vaddr);
-    if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
-        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
-            g_cpu->data_page_va = page_va;
-            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
-        } else {
-            g_cpu->data_host_ptr = NULL;
-        }
-        return mem_read16_phys(paddr);
-    }
-    if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 13);
-        return 0;
-    }
-    printf("[READ FAULT 16] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
-    fflush(stdout);
-    g_cpu->halted = true;
-    return 0;
-}
-
-uint32_t __not_in_flash_func(mem_read32)(uint32_t vaddr) {
-    uint32_t page_va = vaddr >> 12;
-    uint32_t offset = vaddr & 0xFFF;
-
-    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
-                         g_cpu->data_page_va == page_va &&
-                         offset <= 4092, 1)) {
-        uint32_t val;
-        __builtin_memcpy(&val, g_cpu->data_host_ptr + offset, sizeof(val));
-        return val;
-    }
-
-    uint32_t paddr = vaddr;
-    uint32_t va_hi = get_va_hi(vaddr);
-    if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_READ, &paddr)) {
-        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
-            g_cpu->data_page_va = page_va;
-            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
-        } else {
-            g_cpu->data_host_ptr = NULL;
-        }
-        return mem_read32_phys(paddr);
-    }
-    if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 13);
-        return 0;
-    }
-    printf("[READ FAULT 32] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
-    fflush(stdout);
-    g_cpu->halted = true;
-    return 0;
-}
-
-reg64_t __not_in_flash_func(mem_read64)(uint32_t vaddr) {
-    uint32_t page_va = vaddr >> 12;
-    uint32_t offset = vaddr & 0xFFF;
-
-    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
-                         g_cpu->data_page_va == page_va &&
-                         offset <= 4088, 1)) {
-        reg64_t val;
-        __builtin_memcpy(&val, g_cpu->data_host_ptr + offset, sizeof(val));
-        return val;
-    }
-
-    reg64_t val;
-    val.lo = mem_read32(vaddr);
-    val.hi = mem_read32(vaddr + 4U);
-    return val;
-}
-
-void __not_in_flash_func(mem_write8)(uint32_t vaddr, uint8_t val) {
-    uint32_t page_va = vaddr >> 12;
-    uint32_t offset = vaddr & 0xFFF;
-
-    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
-                         g_cpu->data_page_va == page_va, 1)) {
-        *(g_cpu->data_host_ptr + offset) = val;
-        return;
-    }
-
-    uint32_t paddr = vaddr;
-    uint32_t va_hi = get_va_hi(vaddr);
-    if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
-        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
-            g_cpu->data_page_va = page_va;
-            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
-        } else {
-            g_cpu->data_host_ptr = NULL;
-        }
-        mem_write8_phys(paddr, val);
-        return;
-    }
-    if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 15);
-        return;
-    }
-    printf("[WRITE FAULT 8] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
-    fflush(stdout);
-    g_cpu->halted = true;
-}
-
-void __not_in_flash_func(mem_write16)(uint32_t vaddr, uint16_t val) {
-    uint32_t page_va = vaddr >> 12;
-    uint32_t offset = vaddr & 0xFFF;
-
-    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
-                         g_cpu->data_page_va == page_va &&
-                         offset <= 4094, 1)) {
-        __builtin_memcpy(g_cpu->data_host_ptr + offset, &val, sizeof(val));
-        return;
-    }
-
-    uint32_t paddr = vaddr;
-    uint32_t va_hi = get_va_hi(vaddr);
-    if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
-        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
-            g_cpu->data_page_va = page_va;
-            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
-        } else {
-            g_cpu->data_host_ptr = NULL;
-        }
-        mem_write16_phys(paddr, val);
-        return;
-    }
-    if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 15);
-        return;
-    }
-    printf("[WRITE FAULT 16] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo);
-    fflush(stdout);
-    g_cpu->halted = true;
-}
-
-void __not_in_flash_func(mem_write32)(uint32_t vaddr, uint32_t val) {
-    uint32_t page_va = vaddr >> 12;
-    uint32_t offset = vaddr & 0xFFF;
-
-    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
-                         g_cpu->data_page_va == page_va &&
-                         offset <= 4092, 1)) {
-        __builtin_memcpy(g_cpu->data_host_ptr + offset, &val, sizeof(val));
-        return;
-    }
-
-    uint32_t paddr = vaddr;
-    uint32_t va_hi = get_va_hi(vaddr);
-    if (mmu_translate(g_cpu, vaddr, va_hi, FETCH_WRITE, &paddr)) {
-        if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
-            g_cpu->data_page_va = page_va;
-            g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE];
-        } else {
-            g_cpu->data_host_ptr = NULL;
-        }
-        mem_write32_phys(paddr, val);
-        return;
-    }
-    if (g_cpu->priv_mode == 0) {
-        handle_page_fault(vaddr, 15);
-        return;
-    }
-    printf("[WRITE FAULT 32] VA=0x%08X, Val=0x%08X at PC=0x%08X\n", vaddr, val, g_cpu->pc.lo);
-    fflush(stdout);
-    g_cpu->halted = true;
-}
-
-void __not_in_flash_func(mem_write64)(uint32_t vaddr, reg64_t val) {
-    uint32_t page_va = vaddr >> 12;
-    uint32_t offset = vaddr & 0xFFF;
-
-    if (__builtin_expect(g_cpu->data_host_ptr != NULL &&
-                         g_cpu->data_page_va == page_va &&
-                         offset <= 4088, 1)) {
-        __builtin_memcpy(g_cpu->data_host_ptr + offset, &val, sizeof(val));
-        return;
-    }
-
-    mem_write32(vaddr, val.lo);
-    mem_write32(vaddr + 4U, val.hi);
-}
+#include "kernel.bin.inc"
 
 void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
     uint32_t pending = cpu->mip.lo & cpu->sie.lo;
@@ -427,52 +24,32 @@ void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
 
     if (cpu->priv_mode == 0 || (cpu->priv_mode == 1 && sie_enabled)) {
         if (pending & (1U << 9)) { // SEIP
-            cpu->pc_host_ptr = NULL;
-            cpu->data_host_ptr = NULL;
-            cpu->sepc = cpu->pc;
-            cpu->scause.lo = 9U;          
-            cpu->scause.hi = 0x80000000U;
-
+            cpu->pc_host_ptr = NULL; cpu->data_host_ptr = NULL; cpu->sepc = cpu->pc;
+            cpu->scause.lo = 9U; cpu->scause.hi = 0x80000000U;
             uint64_t spie = (sstatus_val >> 1) & 1;
             sstatus_val &= ~(1ULL << 8);
             if (cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);
             sstatus_val = (sstatus_val & ~(1ULL << 5)) | (spie << 5);
             sstatus_val &= ~(1ULL << 1);
-            cpu->sstatus.lo = (uint32_t)sstatus_val;
-            cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
-
-            cpu->priv_mode = 1;
-            cpu->pc.lo = cpu->stvec.lo & ~0x3U;
-            cpu->pc.hi = cpu->stvec.hi;
+            cpu->sstatus.lo = (uint32_t)sstatus_val; cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
+            cpu->priv_mode = 1; cpu->pc.lo = cpu->stvec.lo & ~0x3U; cpu->pc.hi = cpu->stvec.hi;
             return;
         }
 
         if (pending & (1U << 5)) { // STIP
-            cpu->pc_host_ptr = NULL;
-            cpu->data_host_ptr = NULL;
-            cpu->sepc = cpu->pc;
-            cpu->scause.lo = 5U;          
-            cpu->scause.hi = 0x80000000U;
-
+            cpu->pc_host_ptr = NULL; cpu->data_host_ptr = NULL; cpu->sepc = cpu->pc;
+            cpu->scause.lo = 5U; cpu->scause.hi = 0x80000000U;
             uint64_t spie = (sstatus_val >> 1) & 1;
             sstatus_val &= ~(1ULL << 8);
             if (cpu->priv_mode == 1) sstatus_val |= (1ULL << 8);
             sstatus_val = (sstatus_val & ~(1ULL << 5)) | (spie << 5);
             sstatus_val &= ~(1ULL << 1);
-            cpu->sstatus.lo = (uint32_t)sstatus_val;
-            cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
-
-            cpu->priv_mode = 1;
-            cpu->pc.lo = cpu->stvec.lo & ~0x3U;
-            cpu->pc.hi = cpu->stvec.hi;
+            cpu->sstatus.lo = (uint32_t)sstatus_val; cpu->sstatus.hi = (uint32_t)(sstatus_val >> 32);
+            cpu->priv_mode = 1; cpu->pc.lo = cpu->stvec.lo & ~0x3U; cpu->pc.hi = cpu->stvec.hi;
             return;
         }
     }
 }
-
-// ============================================================================
-// Main func and emu loop
-// ============================================================================
 
 int main(void) {
     set_sys_clock_khz(250000, true);
@@ -483,13 +60,13 @@ int main(void) {
     uint32_t sys_clk = clock_get_hz(clk_sys);
     printf("Actual System Clock: %lu Hz (%lu MHz)\n", sys_clk, sys_clk / 1000000);
 
-    tlb_init(); // Init tlb
+    tlb_init();
 
     RV64CPU cpu;
     memset(&cpu, 0, sizeof(RV64CPU));
     memset(guest_ram, 0, RAM_SIZE);
 
-    cpu.priv_mode = 3; // M Mode start
+    cpu.priv_mode = 3;
     g_cpu = &cpu;
 
     if (kernel_bin_len > RAM_SIZE) {
@@ -500,89 +77,54 @@ int main(void) {
     memcpy(&guest_ram[0], kernel_bin, kernel_bin_len);
     printf("Kernel binary loaded successfully. Size: %u bytes\n", (unsigned int)kernel_bin_len);
 
-    cpu.pc.lo = (uint32_t)RAM_BASE;
-    cpu.pc.hi = 0x00000000;
-    cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE);
-    cpu.x[2].hi = 0x00000000;
+    cpu.pc.lo = (uint32_t)RAM_BASE; cpu.pc.hi = 0x00000000;
+    cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE); cpu.x[2].hi = 0x00000000;
 
     printf("Starting CPU execution loop ..\n");
     fflush(stdout);
 
     unsigned long long inst_count = 0;
-    uint64_t last_time = time_us_64();
-    uint64_t last_inst = 0;
 
     while (__builtin_expect(!cpu.halted, 1)) {
         check_pending_interrupts(&cpu);
 
-        //if (__builtin_expect((inst_count & 0x3FF) == 0, 0)) {
-            //uint64_t now = time_us_64();
-            //if (now - last_time >= 1000000) {
-                //uint64_t delta_inst = inst_count - last_inst;
-                //uint64_t delta_time_us = now - last_time; 
-                //uint64_t real_inst_per_sec = (delta_inst * 1000000ULL) / delta_time_us;
-
-                //printf("[PERF] Delta: %llu inst/s (Total: %llu)\n", real_inst_per_sec, inst_count);
-                
-                //last_time = now;
-                //last_inst = inst_count;
-                //}
-            //clint_update_timer_interrupt(&cpu);
-            //}
-
-        // UART (Per 4096 inst )
         if (__builtin_expect((inst_count & 0xFFF) == 0, 0)) {
             uart_check_input();
         }
 
         cpu.trap_raised = false;
-
         uint32_t vaddr = cpu.pc.lo;
         uint32_t page_va = vaddr >> 12;
         uint32_t offset = vaddr & 0xFFF;
 
-        // ★ 32-bit Batch Fetch Fast-Path (Within the same page & 0xFFC or less)
-        if (__builtin_expect(cpu.pc_host_ptr != NULL &&
-                             cpu.pc_page_va == page_va &&
-                             offset <= 4092, 1)) {
+        if (__builtin_expect(cpu.pc_host_ptr != NULL && cpu.pc_page_va == page_va && offset <= 4092, 1)) {
             uint32_t inst;
             __builtin_memcpy(&inst, cpu.pc_host_ptr + offset, sizeof(inst));
-
-            if ((inst & 0x3) == 0x3) {
-                execute_instruction(&cpu, inst);
-            } else {
-                execute_compressed_instruction(&cpu, (uint16_t)(inst & 0xFFFF));
-            }
+            if ((inst & 0x3) == 0x3) execute_instruction(&cpu, inst);
+            else execute_compressed_instruction(&cpu, (uint16_t)(inst & 0xFFFF));
         } else {
-            // ★ Slow-Path: When crossing boundaries or on a cache miss
             uint16_t half = mem_fetch16(vaddr);
             if (cpu.halted || cpu.trap_raised) continue;
 
             if ((half & 0x3) == 0x3) {
                 if (vaddr % 2 != 0) {
                     printf("[ERROR] Misaligned instruction fetch! PC = 0x%08X\n", vaddr);
-                    cpu.halted = true;
-                    break;
+                    cpu.halted = true; break;
                 }
                 uint16_t half_high = mem_fetch16(vaddr + 2);
                 if (cpu.halted || cpu.trap_raised) continue;
-
                 uint32_t inst = (uint32_t)half | ((uint32_t)half_high << 16);
                 execute_instruction(&cpu, inst);
             } else {
                 execute_compressed_instruction(&cpu, half);
             }
         }
-
         inst_count++;
     }
 
     printf("CPU halted after executing %llu instructions.\n", inst_count);
     fflush(stdout);
 
-    while (1) {
-        tight_loop_contents();
-    }
-
+    while (1) { tight_loop_contents(); }
     return 0;
 }

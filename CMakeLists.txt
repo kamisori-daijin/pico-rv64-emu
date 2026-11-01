@@ -13,6 +13,7 @@ pico_sdk_init()
 
 add_executable(rv64_emu
     main.c
+    memory.c 
     cpu/decode_i.c
     cpu/decode_c.c
     devices/uart.c
