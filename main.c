@@ -14,6 +14,7 @@ uint8_t guest_ram[RAM_SIZE];
 RV64CPU *g_cpu = NULL;
 
 #include "kernel.bin.inc"
+#include "dtb.inc"  // dtc -I dts -O dtb から xxd -i で生成した DTB ヘッダー
 
 void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
     uint32_t pending = cpu->mip.lo & cpu->sie.lo;
@@ -23,7 +24,7 @@ void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
     bool sie_enabled = (sstatus_val & (1ULL << 1)) != 0;
 
     if (cpu->priv_mode == 0 || (cpu->priv_mode == 1 && sie_enabled)) {
-        if (pending & (1U << 9)) { // SEIP
+        if (pending & (1U << 9)) { // SEIP (Supervisor External Interrupt)
             cpu->pc_host_ptr = NULL; cpu->data_host_ptr = NULL; cpu->sepc = cpu->pc;
             cpu->scause.lo = 9U; cpu->scause.hi = 0x80000000U;
             uint64_t spie = (sstatus_val >> 1) & 1;
@@ -36,7 +37,7 @@ void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
             return;
         }
 
-        if (pending & (1U << 5)) { // STIP
+        if (pending & (1U << 5)) { // STIP (Supervisor Timer Interrupt)
             cpu->pc_host_ptr = NULL; cpu->data_host_ptr = NULL; cpu->sepc = cpu->pc;
             cpu->scause.lo = 5U; cpu->scause.hi = 0x80000000U;
             uint64_t spie = (sstatus_val >> 1) & 1;
@@ -66,21 +67,34 @@ int main(void) {
     memset(&cpu, 0, sizeof(RV64CPU));
     memset(guest_ram, 0, RAM_SIZE);
 
+    // M-mode (3) でブートストラップ開始
     cpu.priv_mode = 3;
     g_cpu = &cpu;
 
-    if (kernel_bin_len > RAM_SIZE) {
-        printf("Error: Kernel binary is too large for guest RAM!\n");
+    // 1. SRAM 先頭 (0x80000000) に Device Tree (DTB) を配置
+    if (rp2350_dtb_len > RAM_SIZE) {
+        printf("Error: DTB size exceeds SRAM!\n");
         return -1;
     }
+    memcpy(&guest_ram[0], rp2350_dtb, rp2350_dtb_len);
+    printf("DTB loaded to SRAM 0x%08X (Size: %u bytes)\n", (unsigned int)RAM_BASE, (unsigned int)rp2350_dtb_len);
+    printf("Kernel XIP Image in Flash at 0x%08X (Size: %u bytes)\n", (unsigned int)FLASH_BASE, (unsigned int)kernel_bin_len);
 
-    memcpy(&guest_ram[0], kernel_bin, kernel_bin_len);
-    printf("Kernel binary loaded successfully. Size: %u bytes\n", (unsigned int)kernel_bin_len);
+    // 2. PC を Flash XIP 領域の先頭（Linux エントリポイント）に設定
+    cpu.pc.lo = (uint32_t)FLASH_BASE;
+    cpu.pc.hi = 0x00000000;
 
-    cpu.pc.lo = (uint32_t)RAM_BASE; cpu.pc.hi = 0x00000000;
-    cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE); cpu.x[2].hi = 0x00000000;
+    // 3. カーネルスタックポインタ (sp / x2) を SRAM 末尾に設定
+    cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE);
+    cpu.x[2].hi = 0x00000000;
 
-    printf("Starting CPU execution loop ..\n");
+    // 4. RISC-V Linux ブート規約パラメータ
+    cpu.x[10].lo = 0;                   // a0 = Hart ID (0)
+    cpu.x[10].hi = 0;
+    cpu.x[11].lo = (uint32_t)RAM_BASE;  // a1 = DTB ポインタ (0x80000000)
+    cpu.x[11].hi = 0;
+
+    printf("Starting CPU execution loop (XIP Boot at 0x%08X) ..\n", (unsigned int)FLASH_BASE);
     fflush(stdout);
 
     unsigned long long inst_count = 0;

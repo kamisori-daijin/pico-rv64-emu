@@ -2,3 +2,5 @@ build/
 *.bin
 *.inc
 *.img
+*.dtb
+.DS_Store

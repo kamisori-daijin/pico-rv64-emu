@@ -8,10 +8,17 @@
 #include "devices/virtio.h"
 #include "mmu/mmu.h"
 
+extern const uint8_t kernel_bin[];
+extern const uint32_t kernel_bin_len;
+
 static inline uint8_t* paddr_to_host(uint32_t paddr) {
-    uint32_t offset = paddr - RAM_BASE;
-    if (offset < RAM_SIZE) {
-        return &guest_ram[offset];
+    // 1. SRAM  (0x80000000 〜)
+    if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) {
+        return &guest_ram[paddr - RAM_BASE];
+    }
+    // 2. Flash XIP (0x20000000 〜) 
+    if (paddr >= FLASH_BASE && paddr < (FLASH_BASE + kernel_bin_len)) {
+        return (uint8_t*)&kernel_bin[paddr - FLASH_BASE];
     }
     return NULL;
 }

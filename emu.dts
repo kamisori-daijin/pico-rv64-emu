@@ -1,0 +1,78 @@
+/dts-v1/;
+
+/ {
+    #address-cells = <2>;
+    #size-cells = <2>;
+    model = "RP2350 RV64 Linux Emulator";
+    compatible = "riscv-virtio";
+
+    cpus {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        timebase-frequency = <1000000>; // 1MHz (clint の time_us_64 に合わせる)
+
+        cpu0: cpu@0 {
+            device_type = "cpu";
+            reg = <0>;
+            status = "okay";
+            compatible = "riscv";
+            riscv,isa = "rv64imac";
+            mmu-type = "riscv,sv39";
+
+            cpu0_intc: interrupt-controller {
+                #interrupt-cells = <1>;
+                compatible = "riscv,cpu-intc";
+                interrupt-controller;
+            };
+        };
+    };
+
+    // 440 KB SRAM (0x80000000 〜 0x8006E000)
+    memory@80000000 {
+        device_type = "memory";
+        reg = <0x0 0x80000000 0x0 0x0006E000>;
+    };
+
+    chosen {
+        bootargs = "console=ttyS0 earlycon=uart8250,mmio,0x10000000 quiet root=/dev/ram0 rw";
+    };
+
+    soc {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+
+        clint@2000000 {
+            compatible = "riscv,clint0";
+            reg = <0x0 0x02000000 0x0 0x00010000>;
+            interrupts-extended = <&cpu0_intc 3 &cpu0_intc 7>; // M-soft, M-timer
+        };
+
+        plic: interrupt-controller@c000000 {
+            compatible = "riscv,plic0";
+            #interrupt-cells = <1>;
+            #address-cells = <0>;
+            interrupt-controller;
+            reg = <0x0 0x0c000000 0x0 0x00400000>;
+            riscv,ndev = <31>;
+            interrupts-extended = <&cpu0_intc 9 &cpu0_intc 11>; // S-ext, M-ext
+        };
+
+        uart0: serial@10000000 {
+            compatible = "ns16550a";
+            reg = <0x0 0x10000000 0x0 0x00010000>;
+            clock-frequency = <3686400>;
+            interrupt-parent = <&plic>;
+            interrupts = <10>; // UART IRQ 10
+            reg-shift = <0>;
+            reg-io-width = <1>;
+        };
+
+        virtio0: virtio@10001000 {
+            compatible = "virtio,mmio";
+            reg = <0x0 0x10001000 0x0 0x00001000>;
+            interrupt-parent = <&plic>;
+            interrupts = <1>; // VirtIO IRQ 1
+        };
+    };
+};

@@ -4,8 +4,10 @@
 #include <stdint.h>
 #include "cpu/cpu.h"
 
-#define RAM_SIZE (416 * 1024)
+#define RAM_SIZE (440 * 1024)      
 #define RAM_BASE 0x80000000ULL
+
+#define FLASH_BASE 0x20000000ULL
 
 extern uint8_t guest_ram[RAM_SIZE];
 extern RV64CPU *g_cpu;
