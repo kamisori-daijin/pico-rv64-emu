@@ -14,6 +14,7 @@ pico_sdk_init()
 add_executable(rv64_emu
     main.c
     memory.c 
+    multicore_sub.c
     cpu/decode_i.c
     cpu/decode_c.c
     devices/uart.c
@@ -27,6 +28,7 @@ add_executable(rv64_emu
 
 target_link_libraries(rv64_emu 
     pico_stdlib
+    pico_multicore
     pico_bootsel_via_double_reset
 )
 

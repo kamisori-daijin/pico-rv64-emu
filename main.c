@@ -9,6 +9,8 @@
 #include "cpu/decode_c.h"
 #include "mmu/tlb.h"
 #include "memory.h"
+#include "pico/multicore.h"
+#include "multicore_sub.h"
 
 uint8_t guest_ram[RAM_SIZE];
 RV64CPU *g_cpu = NULL;
@@ -52,6 +54,7 @@ void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
 }
 
 int main(void) {
+    printf("Starting pico-rv64-emu....");
     set_sys_clock_khz(250000, true);
     stdio_init_all();
     sleep_ms(1000);
@@ -80,17 +83,16 @@ int main(void) {
     cpu.pc.lo = (uint32_t)RAM_BASE; cpu.pc.hi = 0x00000000;
     cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE); cpu.x[2].hi = 0x00000000;
 
-    printf("Starting CPU execution loop ..\n");
+    // Core 1 を起動
+    multicore_launch_core1(core1_main);
+
+    printf("Starting CPU execution loop on Core 0..\n");
     fflush(stdout);
 
     unsigned long long inst_count = 0;
 
     while (__builtin_expect(!cpu.halted, 1)) {
         check_pending_interrupts(&cpu);
-
-        if (__builtin_expect((inst_count & 0xFFF) == 0, 0)) {
-            uart_check_input();
-        }
 
         cpu.trap_raised = false;
         uint32_t vaddr = cpu.pc.lo;

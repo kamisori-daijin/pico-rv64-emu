@@ -1,4 +1,3 @@
-#ifndef VIRTIO_H
 #define VIRTIO_H
 
 #include <stdint.h>
@@ -7,15 +6,14 @@
 #include <string.h>
 #include "../cpu/cpu.h"
 #include "plic.h"
+#include "pico/multicore.h"
+#include "../ipc.h"
 
 #define VIRTIO0_BASE 0x10001000ULL
 #define VIRTIO0_SIZE 0x100
 
-#include "../fs_img.inc"
-#else
-static const unsigned char fs_img[] = {0};
-static const unsigned int fs_img_len = 0;
-#endif
+extern const unsigned char fs_img[];
+extern const unsigned int fs_img_len;
 
 // Diff Cache (64 -> 256 Sector = 128KB SRAM Used)
 #define CACHE_SECTORS 64
@@ -35,7 +33,7 @@ static inline void cache_write_sector(uint64_t sector, const uint8_t *src) {
             return;
         }
     }
-    //Add empty slots
+    // Add empty slots
     for (int i = 0; i < CACHE_SECTORS; i++) {
         if (!g_sector_cache[i].valid) {
             g_sector_cache[i].sector = sector;
@@ -44,7 +42,7 @@ static inline void cache_write_sector(uint64_t sector, const uint8_t *src) {
             return;
         }
     }
-    // delete 
+    // Delete 
     static int victim = 0;
     printf("[WARN] Sector cache full! Evicting sector %llu for %llu\n", g_sector_cache[victim].sector, sector);
     g_sector_cache[victim].sector = sector;
@@ -137,7 +135,6 @@ static inline void handle_queue_notify(void) {
         uint32_t status_paddr = status_paddr_reg.lo;
 
         if (req_type == 0) { // READ
-            //printf("[VIRTIO READ] sector=%llu, len=%u, dst_pa=0x%08X\n", sector, data_len, data_paddr);
             fflush(stdout);
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
@@ -193,7 +190,9 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
         case 0x030: g_virtio_queue_sel = val; break;
         case 0x038: g_virtio_queue_num = val; break;
         case 0x044: g_virtio_queue_ready = val; break;
-        case 0x050: handle_queue_notify(); break;
+        case 0x050: 
+            multicore_fifo_push_blocking(CMD_VIRTIO_NOTIFY); 
+            break;
         case 0x064: 
             g_virtio_interrupt_status &= ~val;
             if (g_virtio_interrupt_status == 0) {
