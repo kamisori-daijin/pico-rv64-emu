@@ -3,8 +3,9 @@
 
 // ベアメタル（OSなし）設定
 #define NO_SYS                      1
-#define LWIP_SOCKET                 1
-#define LWIP_NETCONN                0
+#define LWIP_SOCKET                 0  // ★ BSD Sockets APIを無効化 (NO_SYS=1 のため)
+#define LWIP_NETCONN                0  // ★ Netconn APIを無効化
+#define LWIP_TIMEVAL_PRIVATE        0
 
 // メモリ設定
 #define MEM_LIBC_MALLOC             0
