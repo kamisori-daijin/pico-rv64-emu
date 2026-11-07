@@ -20,6 +20,7 @@ add_executable(rv64_emu
     devices/uart.c
     devices/clint.c   
     devices/fs_img.c
+    devices/virtio.c
     mmu/mmu.c
     devices/plic.c
     mmu/tlb.c

@@ -7,7 +7,7 @@
 #define RV_UART0_SIZE 0x100U
 
 static int g_rx_char = -1;
-static uint8_t g_uart_ier = 0; // ★ IER (Interrupt Enable Register) 
+static uint8_t g_uart_ier = 0;
 
 extern uint32_t g_plic_uart_pending;
 extern RV64CPU *g_cpu;
@@ -20,13 +20,13 @@ void uart_check_input(void) {
     if (g_rx_char == -1) {
         int c = getchar_timeout_us(0);
         if (c != PICO_ERROR_TIMEOUT) {
-            if (c == '\r') c = '\n'; // CR to LF
+            if (c == '\r') c = '\n';
             g_rx_char = c;
             
-            // notify PLIC and CPU
             g_plic_uart_pending = 1;
             if (g_cpu) {
-                g_cpu->mip.lo |= (1U << 9); // SEIP (Bit 9) 
+                // ★ 修正: アトミック演算
+                __atomic_fetch_or(&g_cpu->mip.lo, (1U << 9), __ATOMIC_RELAXED);
             }
         }
     }
@@ -34,7 +34,7 @@ void uart_check_input(void) {
 
 uint8_t uart_read8(uint32_t paddr) {
     uint32_t offset = paddr - RV_UART0_BASE;
-    if (offset == 0) { // RBR (Receive Buffer Register)
+    if (offset == 0) {
         if (g_rx_char != -1) {
             uint8_t c = (uint8_t)g_rx_char;
             g_rx_char = -1;
@@ -47,20 +47,16 @@ uint8_t uart_read8(uint32_t paddr) {
         }
         return 0;
     }
-    if (offset == 1) { // IER
-        return g_uart_ier;
+    if (offset == 1) return g_uart_ier;
+    if (offset == 2) {
+        if (g_rx_char != -1) return 0x04;
+        if (g_uart_ier & 0x02) return 0x02;
+        return 0x01;
     }
-    if (offset == 2) { // ISR / IIR (Interrupt Status Register)
-        if (g_rx_char != -1) return 0x04; // Received Data Available
-        if (g_uart_ier & 0x02) return 0x02; // THR Empty (TX Interrupt)
-        return 0x01; // No interrupt pending
-    }
-    if (offset == 5) { // LSR (Line Status Register)
-        uint8_t lsr = 0x60; // Bit 5: THR Empty, Bit 6: TEMT
+    if (offset == 5) {
+        uint8_t lsr = 0x60;
         uart_check_input();
-        if (g_rx_char != -1) {
-            lsr |= 0x01; // Bit 0: Data Ready
-        }
+        if (g_rx_char != -1) lsr |= 0x01;
         return lsr;
     }
     return 0;
@@ -68,21 +64,23 @@ uint8_t uart_read8(uint32_t paddr) {
 
 void uart_write8(uint32_t paddr, uint8_t val) {
     uint32_t offset = paddr - RV_UART0_BASE;
-    if (offset == 0) { // THR (Transmitter Holding Register)
+    if (offset == 0) {
         putchar((char)val);
         fflush(stdout);
 
         if (g_uart_ier & 0x02) {
             g_plic_uart_pending = 1;
             if (g_cpu) {
-                g_cpu->mip.lo |= (1U << 9); // SEIP (Bit 9)
+                // ★ 修正: アトミック演算
+                __atomic_fetch_or(&g_cpu->mip.lo, (1U << 9), __ATOMIC_RELAXED);
             }
         }
-    } else if (offset == 1) { // IER (Interrupt Enable Register)
+    } else if (offset == 1) {
         g_uart_ier = (uint8_t)val;
         if ((g_uart_ier & 0x02) && g_cpu) {
             g_plic_uart_pending = 1;
-            g_cpu->mip.lo |= (1U << 9);
+            // ★ 修正: アトミック演算
+            __atomic_fetch_or(&g_cpu->mip.lo, (1U << 9), __ATOMIC_RELAXED);
         }
     }
 }

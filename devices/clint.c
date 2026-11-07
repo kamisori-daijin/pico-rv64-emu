@@ -9,20 +9,16 @@ bool clint_is_addr(uint32_t paddr) {
 
 uint32_t clint_read32(uint32_t paddr) {
     uint32_t offset = paddr - CLINT_BASE;
-    if (offset == 0x0040) { // mtime (lower 32-bit)
+    if (offset == 0x0040) {
         uint64_t t = time_us_64();
         return (uint32_t)t;
     }
-    if (offset == 0x0044) { // mtime (upper 32-bit)
+    if (offset == 0x0044) {
         uint64_t t = time_us_64();
         return (uint32_t)(t >> 32);
     }
-    if (offset == 0x4000) { // mtimecmp (lower)
-        return (uint32_t)mtimecmp;
-    }
-    if (offset == 0x4004) { // mtimecmp (upper)
-        return (uint32_t)(mtimecmp >> 32);
-    }
+    if (offset == 0x4000) return (uint32_t)mtimecmp;
+    if (offset == 0x4004) return (uint32_t)(mtimecmp >> 32);
     return 0;
 }
 
@@ -38,10 +34,10 @@ void clint_write32(uint32_t paddr, uint32_t val) {
 void clint_update_timer_interrupt(RV64CPU *cpu) {
     uint64_t mtime = time_us_64();
     if (mtimecmp != 0 && mtime >= mtimecmp) {
-        cpu->mip.lo |= (1U << 7); // MTIP (Bit 7)
-        cpu->mip.lo |= (1U << 5); // STIP (Bit 5: Supervisor Timer Interrupt) 
+        // ★ 修正: アトミックにタイマー割込みフラグを立てる
+        __atomic_fetch_or(&cpu->mip.lo, (1U << 7) | (1U << 5), __ATOMIC_RELAXED);
     } else {
-        cpu->mip.lo &= ~(1U << 7);
-        cpu->mip.lo &= ~(1U << 5); 
+        // ★ 修正: アトミックにタイマー割込みフラグのみ解除（SEIPに影響を与えない）
+        __atomic_fetch_and(&cpu->mip.lo, ~((1U << 7) | (1U << 5)), __ATOMIC_RELAXED);
     }
 }
