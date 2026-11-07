@@ -69,3 +69,7 @@ add_custom_target(flash
 )
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR} .)
+target_include_directories(rv64_emu PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/net
+)
