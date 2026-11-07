@@ -16,7 +16,6 @@
 extern const unsigned char fs_img[];
 extern const unsigned int fs_img_len;
 
-// ★ VirtIO 共有変数の extern 宣言（実体は devices/virtio.c に配置）
 extern uint32_t g_virtio_status;
 extern uint32_t g_virtio_queue_ready;
 extern uint32_t g_virtio_queue_sel;
@@ -103,19 +102,12 @@ static inline void handle_queue_notify(void) {
     uint32_t used_pa  = g_device_desc_low;
     uint32_t desc_pa  = g_queue_desc_low;
 
-    if (avail_pa == 0 || used_pa == 0 || desc_pa == 0) {
-        printf("[Core1 VirtIO WARN] Uninitialized Queue addresses: desc=0x%08X, avail=0x%08X, used=0x%08X\n", desc_pa, avail_pa, used_pa);
-        fflush(stdout);
-        return;
-    }
+    if (avail_pa == 0 || used_pa == 0 || desc_pa == 0) return;
 
     uint16_t avail_idx = mem_read16_phys(avail_pa + 2);
     uint16_t used_idx  = mem_read16_phys(used_pa + 2);
 
     if (used_idx == avail_idx) return;
-
-    printf("[Core1 VirtIO] Handling Queue: avail_idx=%u, used_idx=%u\n", avail_idx, used_idx);
-    fflush(stdout);
 
     while (used_idx != avail_idx) {
         uint32_t ring_elem_addr = avail_pa + 4 + (used_idx % 8) * 2;
@@ -186,8 +178,6 @@ static inline void handle_queue_notify(void) {
 
     if (g_cpu) {
         __atomic_fetch_or(&g_cpu->mip.lo, (1U << 9), __ATOMIC_RELAXED);
-        printf("[Core1 VirtIO] Raised SEIP interrupt (mip.lo=0x%08X)\n", g_cpu->mip.lo);
-        fflush(stdout);
     }
 }
 
@@ -198,8 +188,6 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
         case 0x038: g_virtio_queue_num = val; break;
         case 0x044: g_virtio_queue_ready = val; break;
         case 0x050: 
-            printf("[Core0 VirtIO] Queue Notify Write -> Push FIFO\n");
-            fflush(stdout);
             multicore_fifo_push_blocking(CMD_VIRTIO_NOTIFY); 
             break;
         case 0x064: 
@@ -208,8 +196,6 @@ static inline void virtio_write32(uint32_t paddr, uint32_t val) {
                 g_plic_virtio_pending = 0;
                 if (g_cpu && !g_plic_uart_pending) {
                     __atomic_fetch_and(&g_cpu->mip.lo, ~(1U << 9), __ATOMIC_RELAXED);
-                    printf("[Core0 VirtIO] Cleared SEIP interrupt\n");
-                    fflush(stdout);
                 }
             }
             break;

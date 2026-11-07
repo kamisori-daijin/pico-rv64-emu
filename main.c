@@ -26,8 +26,6 @@ void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
 
     if (cpu->priv_mode == 0 || (cpu->priv_mode == 1 && sie_enabled)) {
         if (pending & (1U << 9)) { // SEIP
-            printf("[Core0 Interrupt] Trapped SEIP! PC=0x%08X\n", cpu->pc.lo);
-            fflush(stdout);
             cpu->pc_host_ptr = NULL; cpu->data_host_ptr = NULL; cpu->sepc = cpu->pc;
             cpu->scause.lo = 9U; cpu->scause.hi = 0x80000000U;
             uint64_t spie = (sstatus_val >> 1) & 1;
@@ -56,6 +54,7 @@ void __not_in_flash_func(check_pending_interrupts)(RV64CPU *cpu) {
 }
 
 int main(void) {
+    printf("Starting pico-rv64-emu");
     set_sys_clock_khz(250000, true);
     stdio_init_all();
     sleep_ms(1000);
