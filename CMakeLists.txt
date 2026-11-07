@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
 set(PICO_PLATFORM rp2350-riscv)
-set(PICO_BOARD pico2)
+set(PICO_BOARD pico2_w)
 set(PICO_GCC_TRIPLE "riscv64-unknown-elf")
 
 # import sdk
@@ -54,6 +54,7 @@ target_link_libraries(rv64_emu
     pico_multicore
     pico_bootsel_via_double_reset
     pico_cyw43_arch_lwip_poll
+    pico_cyw43_arch_lwip_threadsafe_background
 )
 
 pico_add_extra_outputs(rv64_emu)

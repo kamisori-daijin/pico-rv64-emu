@@ -225,7 +225,7 @@ void __not_in_flash_func(mem_write8)(uint32_t vaddr, uint8_t val) {
         if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) { g_cpu->data_page_va = page_va; g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE]; } else { g_cpu->data_host_ptr = NULL; }
         mem_write8_phys(paddr, val); return;
     }
-    if (g_cpu->priv_mode == 0) { handle_page_fault(vaddr, 15); return 0; }
+    if (g_cpu->priv_mode == 0) { handle_page_fault(vaddr, 15); return; } // ★ return 0; から return; に修正
     printf("[WRITE FAULT 8] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo); fflush(stdout); g_cpu->halted = true;
 }
 
@@ -237,7 +237,7 @@ void __not_in_flash_func(mem_write16)(uint32_t vaddr, uint16_t val) {
         if (paddr >= RAM_BASE && paddr < (RAM_BASE + RAM_SIZE)) { g_cpu->data_page_va = page_va; g_cpu->data_host_ptr = &guest_ram[(paddr & ~0xFFFU) - RAM_BASE]; } else { g_cpu->data_host_ptr = NULL; }
         mem_write16_phys(paddr, val); return;
     }
-    if (g_cpu->priv_mode == 0) { handle_page_fault(vaddr, 15); return 0; }
+    if (g_cpu->priv_mode == 0) { handle_page_fault(vaddr, 15); return; } // ★ return 0; から return; に修正
     printf("[WRITE FAULT 16] VA=0x%08X at PC=0x%08X\n", vaddr, g_cpu->pc.lo); fflush(stdout); g_cpu->halted = true;
 }
 
