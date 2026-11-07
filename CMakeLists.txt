@@ -19,6 +19,7 @@ add_executable(rv64_emu
     cpu/decode_c.c
     devices/uart.c
     devices/clint.c   
+    devices/fs_img.c
     mmu/mmu.c
     devices/plic.c
     mmu/tlb.c
