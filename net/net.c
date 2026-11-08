@@ -76,16 +76,17 @@ void net_init(void) {
     }
 
     cyw43_arch_enable_sta_mode();
-    printf("[Wi-Fi] Connecting to %s...\n", WIFI_SSID);
+    printf("[Wi-Fi] Connecting to %s (Async)...\n", WIFI_SSID);
 
-    int err = cyw43_arch_wifi_connect_timeout_ms(
-        WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000
+    // ★ 変更: 30秒ブロックする connect_timeout_ms から 非同期 connect_async へ変更
+    int err = cyw43_arch_wifi_connect_async(
+        WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK
     );
 
     if (err) {
-        printf("[Wi-Fi] Connect Failed! Code: %d\n", err);
+        printf("[Wi-Fi] Connect Start Failed! Code: %d\n", err);
     } else {
-        printf("[Wi-Fi] Connected Successfully!\n");
+        printf("[Wi-Fi] Connecting in background...\n");
     }
 }
 
