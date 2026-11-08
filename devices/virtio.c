@@ -20,25 +20,70 @@ uint32_t g_virtio_interrupt_status = 0;
 
 static uint8_t sector_buf[FLASH_SECTOR_SIZE];
 
-// 初回起動時、Flash Disk 領域が未初期化なら fs_img を書き込む
+
+// 初回起動時、Flash Disk 領域が未初期化(0xFFFFFFFF)なら fs.img を書き込む
 void init_flash_disk_if_needed(void) {
+    printf("[Flash Disk 1] Checking magic at 0x%08X...\n", (unsigned int)FLASH_DISK_ADDR);
+    fflush(stdout);
+
     const uint32_t *magic = (const uint32_t *)FLASH_DISK_ADDR;
+    printf("[Flash Disk 2] Magic value read: 0x%08X\n", (unsigned int)*magic);
+    fflush(stdout);
+
     if (*magic == 0xFFFFFFFF) {
-        printf("[Flash Disk] First boot detected. Flashing fs.img to Flash ROM...\n");
+        printf("[Flash Disk 3] First boot detected. Flashing fs.img (%u bytes)...\n", fs_img_len);
         fflush(stdout);
 
+        // 4KB アライメントの消去サイズ計算
         uint32_t erase_len = (fs_img_len + FLASH_SECTOR_SIZE - 1) & ~(FLASH_SECTOR_SIZE - 1);
+        printf("[Flash Disk 4] Total erase length: %lu bytes (0x%08X)\n", (unsigned long)erase_len, (unsigned int)erase_len);
+        fflush(stdout);
 
-        multicore_lockout_start_blocking();
-        uint32_t ints = save_and_disable_interrupts();
+        // 64KB block
+        #define ERASE_CHUNK (64 * 1024)
+        printf("[Flash Disk 5] Starting block erase...\n");
+        fflush(stdout);
 
-        flash_range_erase(FLASH_DISK_OFFSET, erase_len);
-        flash_range_program(FLASH_DISK_OFFSET, fs_img, erase_len);
+        for (uint32_t offset = 0; offset < erase_len; offset += ERASE_CHUNK) {
+            uint32_t chunk = (erase_len - offset < ERASE_CHUNK) ? (erase_len - offset) : ERASE_CHUNK;
+            printf("  Erasing at 0x%08X (%lu%%)...\n", 
+                   (unsigned int)(FLASH_DISK_OFFSET + offset), 
+                   (unsigned long)(offset * 100 / erase_len));
+            fflush(stdout);
 
-        restore_interrupts(ints);
-        multicore_lockout_end_blocking();
+            uint32_t ints = save_and_disable_interrupts();
+            flash_range_erase(FLASH_DISK_OFFSET + offset, chunk);
+            restore_interrupts(ints);
+        }
+        printf("  Erase complete (100%%)!\n");
+        fflush(stdout);
 
-        printf("[Flash Disk] fs.img initial persistent image created (%lu bytes)!\n", (unsigned long)erase_len);
+        //4KB
+        #define PROGRAM_CHUNK (4 * 1024)
+        printf("[Flash Disk 6] Starting program...\n");
+        fflush(stdout);
+
+        for (uint32_t offset = 0; offset < erase_len; offset += PROGRAM_CHUNK) {
+            uint32_t chunk = (erase_len - offset < PROGRAM_CHUNK) ? (erase_len - offset) : PROGRAM_CHUNK;
+            
+            if (offset % (64 * 1024) == 0) {
+                printf("  Programming at 0x%08X (%lu%%)...\n", 
+                       (unsigned int)(FLASH_DISK_OFFSET + offset), 
+                       (unsigned long)(offset * 100 / erase_len));
+                fflush(stdout);
+            }
+
+            // Buffering
+            memcpy(sector_buf, &fs_img[offset], chunk);
+
+            uint32_t ints = save_and_disable_interrupts();
+            flash_range_program(FLASH_DISK_OFFSET + offset, sector_buf, chunk);
+            restore_interrupts(ints);
+        }
+        printf("  Programming complete (100%%)!\n");
+        fflush(stdout);
+
+        printf("[Flash Disk 7] Initial fs.img persistent storage created successfully!\n");
         fflush(stdout);
     } else {
         printf("[Flash Disk] Existing persistent storage mounted.\n");
