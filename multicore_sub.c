@@ -1,5 +1,6 @@
 #include "multicore_sub.h"
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
 #include "cpu/cpu.h"
 #include "cpu/decode_c.h"
 #include "memory.h"
@@ -44,19 +45,16 @@ void check_pending_interrupts(RV64CPU *cpu) {
 }
 
 void core1_main(void) {
-    printf("[Core 1] Pure RV64 CPU Execution Loop Started.\n");
+    // ★ Core 0 からの Flash 書き込み要求時に Core 1 を一時停止できるハンドラを初期化
+    multicore_lockout_victim_init();
+
+    printf("[Core 1] RV64 CPU Execution Loop Started.\n");
 
     RV64CPU *cpu = g_cpu;
     unsigned long long inst_count = 0;
 
     while (__builtin_expect(!cpu->halted, 1)) {
         check_pending_interrupts(cpu);
-
-        if (__builtin_expect((inst_count % 5000000ULL) == 0 && inst_count > 0, 0)) {
-            printf("[Heartbeat Core 1] Inst: %llu M | PC: 0x%08X | Priv: %d\n",
-                   inst_count / 1000000ULL, cpu->pc.lo, cpu->priv_mode);
-        }
-
         cpu->trap_raised = false;
         uint32_t vaddr = cpu->pc.lo;
         uint32_t page_va = vaddr >> 12;

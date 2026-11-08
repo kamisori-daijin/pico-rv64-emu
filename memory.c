@@ -115,15 +115,6 @@ void mem_write32_phys(uint32_t paddr, uint32_t val) {
     if (virtio_is_addr(paddr)) { virtio_write32(paddr, val); return; }
     if (plic_is_addr(paddr)) { plic_write32(paddr, val, g_cpu); return; }
 
-    if (paddr == NET_MMIO_PHYS_BASE) {
-        uint8_t *host_ptr = paddr_to_host(paddr);
-        if (host_ptr) __builtin_memcpy(host_ptr, &val, sizeof(val));
-        if (val != NET_CMD_NONE) {
-            multicore_fifo_push_blocking(CMD_NET_MMIO);
-        }
-        return;
-    }
-
     uint8_t *host_ptr = paddr_to_host(paddr);
     if (host_ptr) __builtin_memcpy(host_ptr, &val, sizeof(val));
 }

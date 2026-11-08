@@ -3,10 +3,11 @@
 #include <string.h>
 #include "plic.h"
 #include "pico/multicore.h"
+#include "hardware/flash.h"
+#include "hardware/sync.h"
 #include "../ipc.h"
 #include "../memory.h"
 
-// ★ 共有変数の実体定義
 uint32_t g_virtio_status = 0;
 uint32_t g_virtio_queue_ready = 0;
 uint32_t g_virtio_queue_sel = 0;
@@ -16,47 +17,39 @@ uint32_t g_queue_desc_low = 0;
 uint32_t g_driver_desc_low = 0;
 uint32_t g_device_desc_low = 0;
 uint32_t g_virtio_interrupt_status = 0;
-SectorCache g_sector_cache[CACHE_SECTORS];
 
-// 内部ヘルパー関数
-static void cache_write_sector(uint64_t sector, const uint8_t *src) {
-    for (int i = 0; i < CACHE_SECTORS; i++) {
-        if (g_sector_cache[i].valid && g_sector_cache[i].sector == sector) {
-            memcpy(g_sector_cache[i].data, src, 512);
-            return;
-        }
+static uint8_t sector_buf[FLASH_SECTOR_SIZE];
+
+// 初回起動時、Flash Disk 領域が未初期化なら fs_img を書き込む
+void init_flash_disk_if_needed(void) {
+    const uint32_t *magic = (const uint32_t *)FLASH_DISK_ADDR;
+    if (*magic == 0xFFFFFFFF) {
+        printf("[Flash Disk] First boot detected. Flashing fs.img to Flash ROM...\n");
+        fflush(stdout);
+
+        uint32_t erase_len = (fs_img_len + FLASH_SECTOR_SIZE - 1) & ~(FLASH_SECTOR_SIZE - 1);
+
+        multicore_lockout_start_blocking();
+        uint32_t ints = save_and_disable_interrupts();
+
+        flash_range_erase(FLASH_DISK_OFFSET, erase_len);
+        flash_range_program(FLASH_DISK_OFFSET, fs_img, erase_len);
+
+        restore_interrupts(ints);
+        multicore_lockout_end_blocking();
+
+        printf("[Flash Disk] fs.img initial persistent image created (%lu bytes)!\n", (unsigned long)erase_len);
+        fflush(stdout);
+    } else {
+        printf("[Flash Disk] Existing persistent storage mounted.\n");
+        fflush(stdout);
     }
-    for (int i = 0; i < CACHE_SECTORS; i++) {
-        if (!g_sector_cache[i].valid) {
-            g_sector_cache[i].sector = sector;
-            memcpy(g_sector_cache[i].data, src, 512);
-            g_sector_cache[i].valid = true;
-            return;
-        }
-    }
-    static int victim = 0;
-    g_sector_cache[victim].sector = sector;
-    memcpy(g_sector_cache[victim].data, src, 512);
-    g_sector_cache[victim].valid = true;
-    victim = (victim + 1) % CACHE_SECTORS;
 }
 
-static bool cache_read_sector(uint64_t sector, uint8_t *dst) {
-    for (int i = 0; i < CACHE_SECTORS; i++) {
-        if (g_sector_cache[i].valid && g_sector_cache[i].sector == sector) {
-            memcpy(dst, g_sector_cache[i].data, 512);
-            return true;
-        }
-    }
-    return false;
-}
-
-// VirtIO アドレス判定
 bool virtio_is_addr(uint32_t paddr) {
     return (paddr >= VIRTIO0_BASE && paddr < (VIRTIO0_BASE + VIRTIO0_SIZE));
 }
 
-// VirtIO 32bit 読み出し
 uint32_t virtio_read32(uint32_t paddr) {
     uint32_t offset = paddr - VIRTIO0_BASE;
     switch (offset) {
@@ -73,7 +66,7 @@ uint32_t virtio_read32(uint32_t paddr) {
     }
 }
 
-// VirtIO キュー処理 (Core 1 が実行)
+// VirtIO キュー処理
 void handle_queue_notify(void) {
     uint32_t avail_pa = g_driver_desc_low;
     uint32_t used_pa  = g_device_desc_low;
@@ -109,34 +102,42 @@ void handle_queue_notify(void) {
         reg64_t  status_paddr_reg = mem_read64_phys(d2_addr);
         uint32_t status_paddr = status_paddr_reg.lo;
 
-        if (req_type == 0) { // READ
+        if (req_type == 0) { // READ (XIP経由で直接読み出し / 0ms)
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
-                uint8_t sector_buf[512];
+                uint32_t byte_offset = (uint32_t)(cur_sector * 512);
 
-                uint64_t img_offset = cur_sector * 512;
+                const uint8_t *src_flash = (const uint8_t *)(FLASH_DISK_ADDR + byte_offset);
                 for (int i = 0; i < 512; i++) {
-                    if ((img_offset + i) < fs_img_len) {
-                        sector_buf[i] = fs_img[img_offset + i];
-                    } else {
-                        sector_buf[i] = 0;
-                    }
-                }
-
-                cache_read_sector(cur_sector, sector_buf);
-
-                for (int i = 0; i < 512; i++) {
-                    mem_write8_phys(data_paddr + offset + i, sector_buf[i]);
+                    mem_write8_phys(data_paddr + offset + i, src_flash[i]);
                 }
             }
-        } else if (req_type == 1) { // WRITE
+        } else if (req_type == 1) { // WRITE (4KB RMW + Core1 Lockout 永続化)
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
-                uint8_t sector_buf[512];
+                uint32_t byte_offset = (uint32_t)(cur_sector * 512);
+                uint32_t flash_offset = FLASH_DISK_OFFSET + byte_offset;
+
+                uint32_t sector_start_offset = flash_offset & ~(FLASH_SECTOR_SIZE - 1);
+                uint32_t offset_in_sector = flash_offset & (FLASH_SECTOR_SIZE - 1);
+
+                // 1. 4KB セクタを SRAM にキャプチャ
+                memcpy(sector_buf, (const void *)(XIP_BASE + sector_start_offset), FLASH_SECTOR_SIZE);
+
+                // 2. 512バイト分を上書き
                 for (int i = 0; i < 512; i++) {
-                    sector_buf[i] = mem_read8_phys(data_paddr + offset + i);
+                    sector_buf[offset_in_sector + i] = mem_read8_phys(data_paddr + offset + i);
                 }
-                cache_write_sector(cur_sector, sector_buf);
+
+                // 3. Core 1 をロックアウト停止させて Flash 書き換え
+                multicore_lockout_start_blocking();
+                uint32_t ints = save_and_disable_interrupts();
+
+                flash_range_erase(sector_start_offset, FLASH_SECTOR_SIZE);
+                flash_range_program(sector_start_offset, sector_buf, FLASH_SECTOR_SIZE);
+
+                restore_interrupts(ints);
+                multicore_lockout_end_blocking();
             }
         }
 
@@ -158,7 +159,6 @@ void handle_queue_notify(void) {
     }
 }
 
-// VirtIO 32bit 書き込み
 void virtio_write32(uint32_t paddr, uint32_t val) {
     uint32_t offset = paddr - VIRTIO0_BASE;
     switch (offset) {

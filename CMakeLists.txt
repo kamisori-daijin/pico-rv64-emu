@@ -39,8 +39,7 @@ add_executable(rv64_emu
     devices/virtio.c
     mmu/mmu.c
     devices/plic.c
-    mmu/tlb.c
-    net/net.c        
+    mmu/tlb.c      
     ${CMAKE_CURRENT_BINARY_DIR}/kernel.bin.inc
 )
 
@@ -53,10 +52,10 @@ target_link_libraries(rv64_emu
     pico_stdlib
     pico_multicore
     pico_bootsel_via_double_reset
-    pico_cyw43_arch_lwip_poll
 )
 
 pico_add_extra_outputs(rv64_emu)
+add_compile_options(-march=rv32imac_zba_zbb_zbs)
 
 # UART and USB
 pico_enable_stdio_uart(rv64_emu 1)
