@@ -2,3 +2,5 @@ build/
 *.bin
 *.inc
 *.img
+.DS_Store
+wifi_secret.cmake
