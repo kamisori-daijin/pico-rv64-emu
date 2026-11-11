@@ -1,8 +1,8 @@
 # xv6-riscv64 on RP2350
 
-This is a lightweight 64-bit RISC-V software emulator and bare-metal port designed to run **xv6-riscv** within the limited SRAM capacity of the RP2350 (Raspberry Pi Pico 2).
+This is a lightweight 64-bit RISC-V software emulator designed to run **xv6-riscv** within the limited SRAM capacity of the RP2350 (Raspberry Pi Pico 2).
 
-It emulates virtual memory based on the Sv39 MMU, a 16550 UART, CLINT, PLIC, and a VirtIO block device (for disk I/O) with a sector cache. This enables the full execution of user-mode processes, including a shell (`sh`) and various user utilities (such as `ls` and `echo`). ---
+The system emulates virtual memory based on the Sv39 MMU, a 16550 UART, CLINT, PLIC, and a VirtIO block device (for disk I/O) with a sector cache. This enables the full execution of user-mode processes, including a shell (`sh`) and various user utilities (such as `ls` and `echo`).
 
 ## Features
 

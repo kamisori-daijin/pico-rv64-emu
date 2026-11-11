@@ -21,7 +21,7 @@ uint32_t g_virtio_interrupt_status = 0;
 static uint8_t sector_buf[FLASH_SECTOR_SIZE];
 
 
-// 初回起動時、Flash Disk 領域が未初期化(0xFFFFFFFF)なら fs.img を書き込む
+// Write fs.img when first boot
 void init_flash_disk_if_needed(void) {
     printf("[Flash Disk 1] Checking magic at 0x%08X...\n", (unsigned int)FLASH_DISK_ADDR);
     fflush(stdout);
@@ -34,7 +34,7 @@ void init_flash_disk_if_needed(void) {
         printf("[Flash Disk 3] First boot detected. Flashing fs.img (%u bytes)...\n", fs_img_len);
         fflush(stdout);
 
-        // 4KB アライメントの消去サイズ計算
+        // 4KB Alignment 
         uint32_t erase_len = (fs_img_len + FLASH_SECTOR_SIZE - 1) & ~(FLASH_SECTOR_SIZE - 1);
         printf("[Flash Disk 4] Total erase length: %lu bytes (0x%08X)\n", (unsigned long)erase_len, (unsigned int)erase_len);
         fflush(stdout);
@@ -111,7 +111,7 @@ uint32_t virtio_read32(uint32_t paddr) {
     }
 }
 
-// VirtIO キュー処理
+// VirtIO Queue
 void handle_queue_notify(void) {
     uint32_t avail_pa = g_driver_desc_low;
     uint32_t used_pa  = g_device_desc_low;
@@ -147,7 +147,7 @@ void handle_queue_notify(void) {
         reg64_t  status_paddr_reg = mem_read64_phys(d2_addr);
         uint32_t status_paddr = status_paddr_reg.lo;
 
-        if (req_type == 0) { // READ (XIP経由で直接読み出し / 0ms)
+        if (req_type == 0) { // READ 
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
                 uint32_t byte_offset = (uint32_t)(cur_sector * 512);
@@ -157,7 +157,7 @@ void handle_queue_notify(void) {
                     mem_write8_phys(data_paddr + offset + i, src_flash[i]);
                 }
             }
-        } else if (req_type == 1) { // WRITE (4KB RMW + Core1 Lockout 永続化)
+        } else if (req_type == 1) { // WRITE
             for (uint32_t offset = 0; offset < data_len; offset += 512) {
                 uint64_t cur_sector = sector + (offset / 512);
                 uint32_t byte_offset = (uint32_t)(cur_sector * 512);
@@ -166,15 +166,15 @@ void handle_queue_notify(void) {
                 uint32_t sector_start_offset = flash_offset & ~(FLASH_SECTOR_SIZE - 1);
                 uint32_t offset_in_sector = flash_offset & (FLASH_SECTOR_SIZE - 1);
 
-                // 1. 4KB セクタを SRAM にキャプチャ
+                // 1. 4KB Sector caputure to SRAM
                 memcpy(sector_buf, (const void *)(XIP_BASE + sector_start_offset), FLASH_SECTOR_SIZE);
 
-                // 2. 512バイト分を上書き
+                // 2. 512Byte
                 for (int i = 0; i < 512; i++) {
                     sector_buf[offset_in_sector + i] = mem_read8_phys(data_paddr + offset + i);
                 }
 
-                // 3. Core 1 をロックアウト停止させて Flash 書き換え
+                // 3. Core 1 Lockout
                 multicore_lockout_start_blocking();
                 uint32_t ints = save_and_disable_interrupts();
 

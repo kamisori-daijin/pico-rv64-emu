@@ -45,7 +45,7 @@ void check_pending_interrupts(RV64CPU *cpu) {
 }
 
 void core1_main(void) {
-    // ★ Core 0 からの Flash 書き込み要求時に Core 1 を一時停止できるハンドラを初期化
+    //Core0 to Core1 interruput
     multicore_lockout_victim_init();
 
     printf("[Core 1] RV64 CPU Execution Loop Started.\n");

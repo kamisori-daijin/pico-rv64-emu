@@ -27,7 +27,7 @@ int main(void) {
     sleep_ms(1000);
     setvbuf(stdout, NULL, _IONBF, 0);
 
-    printf("\n=== RP2350 RV64 Emulator (250MHz / Multi-Core) ===\n");
+    printf("\n=== RP2350 RV64 Emulator ===\n");
     uint32_t sys_clk = clock_get_hz(clk_sys);
     printf("Actual System Clock: %lu MHz\n", sys_clk / 1000000);
 
@@ -53,14 +53,14 @@ int main(void) {
     cpu.x[2].lo = (uint32_t)(RAM_BASE + RAM_SIZE); 
     cpu.x[2].hi = 0x00000000;
 
-    // 初回ブート時に fs.img を Flash ROM に書き込み、マウントする
+    // Mount
     init_flash_disk_if_needed();
 
-    // Core 1 で CPU エミュレーション開始
+    // Core 1 Start
     printf("[Core 0] Launching RV64 CPU loop on Core 1...\n");
     multicore_launch_core1(core1_main);
 
-    // Core 0 メインイベントループ (I/O, 割り込み)
+    // Core 0 I/O,interruput
     printf("[Core 0] Entering I/O Event Loop...\n");
     fflush(stdout);
 
@@ -72,7 +72,7 @@ int main(void) {
             }
         }
 
-        // シリアル入力とタイマー割り込み更新
+        // Update serial and timer
         uart_check_input();
 
         if (g_cpu) {
